@@ -1,0 +1,22 @@
+# Normalize line endings. Store text files with LF in the repo AND check them
+# out with LF in the working tree (eol=lf) so Windows doesn't rewrite them to
+# CRLF — this silences the "LF will be replaced by CRLF" warnings on commit.
+* text=auto eol=lf
+
+# Explicit text types (firmware sources, config, docs).
+*.cpp  text eol=lf
+*.h    text eol=lf
+*.c    text eol=lf
+*.ino  text eol=lf
+*.ini  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.csv  text eol=lf
+
+# Treat firmware/image artifacts as binary (never line-ending converted).
+*.bin  binary
+*.elf  binary
+*.png  binary
+*.jpg  binary
+*.ico  binary
