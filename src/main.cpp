@@ -2,17 +2,15 @@
 // main.cpp — Airsoft Control Point System firmware entry point.
 //
 // This is the shared base across all node types. It brings up the non-blocking
-// WiFi module, an e-paper status display, and the MQTT reporting/command
-// channel; OTA, buttons, and LEDs layer on from here. The golden rule
-// (CLAUDE.md): loop() must never block — no delay() — so buttons and the
-// network stay responsive at all times. (The e-paper refresh is the one slow
-// operation, and it only runs when the shown status actually changes.)
+// WiFi module, an OLED live display, and the MQTT reporting/command channel;
+// OTA, buttons, and LEDs layer on from here. The golden rule (CLAUDE.md):
+// loop() must never block — no delay() — so buttons and the network stay
+// responsive at all times.
 //
 #include <Arduino.h>
 
 #include "config.h"
 #include "network.h"
-#include "epaper.h"
 #include "mqtt.h"
 #include "ota.h"
 #include "buttons.h"
@@ -81,10 +79,7 @@ void setup() {
   statusLedSetup();
   gameSetup();    // after buttonsSetup: the game reads debounced button state
 
-  // Prefer the OLED for the live display if one is wired; the e-paper is the
-  // fallback. Both are initialized; only the chosen one is driven in loop().
-  oledSetup();
-  epaperSetup();
+  oledSetup();  // live display; the game still runs headless if absent
 }
 
 // Drive the onboard RGB from the GAME state: solid owner color when held, the
@@ -108,22 +103,6 @@ static void updateStatusLed() {
   }
 }
 
-// Refresh the e-paper game screen. A full refresh blocks ~4 s, so: redraw
-// immediately on ownership change, otherwise only slowly AND only when no
-// button is held (so a refresh can never interrupt a capture attempt).
-static void updateGameDisplay(bool ownerChanged) {
-  static unsigned long lastDraw = 0;
-  const bool held = buttonPressed(TEAM_RED) || buttonPressed(TEAM_BLUE);
-  if (!ownerChanged &&
-      !(millis() - lastDraw >= GAME_EPAPER_REFRESH_MS && !held)) {
-    return;
-  }
-  lastDraw = millis();
-  epaperUpdateGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED) / 1000,
-                   gameCumulativeMs(TEAM_BLUE) / 1000, wifiConnected(),
-                   wifiIpString());
-}
-
 void loop() {
   networkLoop();        // drive WiFi connect/reconnect state machine
   otaLoop();            // service OTA listener (arms once WiFi is up)
@@ -139,14 +118,10 @@ void loop() {
 
   updateStatusLed();  // onboard RGB reflects ownership/capture
 
-  // Live game display: OLED if present (fast, live-ticking), else e-paper.
-  if (oledPresent()) {
-    oledShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
-                 gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
-                 gameCapturingTeam(), gameCaptureElapsedMs());
-  } else {
-    updateGameDisplay(ownerChanged);  // e-paper game screen (throttled)
-  }
+  // Live game display on the OLED (no-ops internally if no panel is present).
+  oledShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
+               gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
+               gameCapturingTeam(), gameCaptureElapsedMs());
 
   // Lightweight heartbeat to Serial so we can confirm the loop is alive and
   // watch connection state without blocking. Non-blocking millis() timer.
@@ -157,6 +132,6 @@ void loop() {
                   wifiStatusString().c_str(), mqttStatusString().c_str());
   }
 
-  // Next: WS2812B ownership strip and TM1637 timer displays will consume the
-  // same game state. Everything in this loop must stay non-blocking.
+  // Next: WS2812B ownership strip and the 2" ST7789 LCD (team-colored screen +
+  // large timers) will consume the same game state. Stay non-blocking.
 }

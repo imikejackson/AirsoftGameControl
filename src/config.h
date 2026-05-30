@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 5
+#define FIRMWARE_VERSION 6
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -102,11 +102,6 @@
 // (CLAUDE.md: 2-3s to prevent accidental griefing).
 #define CAPTURE_HOLD_MS 2500UL
 
-// How often the e-paper may refresh cumulative times while idle. Kept slow:
-// a full refresh blocks ~4s, so we only do it when no button is held and at
-// most this often. The live scoreboard is the MQTT dashboard's job.
-#define GAME_EPAPER_REFRESH_MS 15000UL
-
 // ---------------------------------------------------------------------------
 // Onboard status RGB LED
 // ---------------------------------------------------------------------------
@@ -118,15 +113,14 @@
 #define PIN_STATUS_RGB 2
 
 // ---------------------------------------------------------------------------
-// OLED display (optional — preferred over e-paper when present)
+// OLED display (the live information display)
 // ---------------------------------------------------------------------------
-// SSD1306 128x64 I2C (e.g. UCTRONICS 0.96"). ~30ms refresh vs the e-paper's
-// ~4s, so it shows LIVE-ticking timers. The cheap "yellow/blue" panels are
-// monochrome with a FIXED top ~16px yellow / bottom blue split (not
-// controllable) — team color still comes from the LEDs. Auto-detected at boot:
-// if present it takes over the live game display; otherwise we use the e-paper.
-// It can also stand in for the TM1637 timer displays (shows both team times),
-// which is why SCL lands on GPIO 22 (the old TM1637 blue-CLK reservation).
+// SSD1306 128x64 I2C (e.g. UCTRONICS 0.96"). Fast (~30ms) refresh, so it shows
+// LIVE-ticking timers. The cheap "yellow/blue" panels are monochrome with a
+// FIXED top ~16px yellow / bottom blue split (not controllable) — team color
+// comes from the LEDs (and later the ST7789 LCD). Probed on the I2C bus at
+// boot; if absent the game still runs headless. SCL lands on GPIO 22, the old
+// (now-dropped) TM1637 blue-CLK reservation.
 #define PIN_OLED_SDA    21
 #define PIN_OLED_SCL    22
 #define OLED_I2C_ADDR   0x3C
@@ -139,13 +133,13 @@
 // ---------------------------------------------------------------------------
 // Avoid GPIO 6-11 (flash). Be cautious with strapping pins 0, 2, 12, 15.
 //
-// PIN CONFLICT WARNING (e-paper bring-up, validated on a Waveshare 2.13"):
-// GxEPD2 uses the ESP32 hardware VSPI bus — CLK=GPIO18, DIN/MOSI=GPIO23 — plus
-// CS=5, DC=17, RST=16, BUSY=4. Note 18 and 23 below are reserved for the two
-// TM1637 control-point displays, and CS=5 == PIN_LED_DATA. If a control point
-// is to carry BOTH an e-paper display AND the TM1637s + LED strip, these must
-// be re-assigned (move the e-paper to spare GPIOs, or use VSPI vs HSPI
-// deliberately). Decide whether e-paper replaces the TM1637s before wiring.
+// DISPLAY PLAN: the e-paper has been retired. The live display is the SSD1306
+// OLED on I2C (SDA=21, SCL=22). A 2" ST7789 LCD (SPI: SCK/MOSI/CS/DC/RST/BL)
+// will become the production control-point display and supersedes the TM1637
+// 7-segment timers — so the PIN_DISP_* defines below are legacy reference only
+// (unused; the LCD's SPI pins will be assigned when that module lands). Note
+// the OLED's SCL (22) reuses the old TM1637 blue-CLK pin, which is fine now
+// that the TM1637s are dropped.
 #if NODE_TYPE == NODE_TYPE_CONTROLPOINT
   #define PIN_BTN_RED        25
   #define PIN_BTN_BLUE       26
