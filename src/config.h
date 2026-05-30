@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 3
+#define FIRMWARE_VERSION 4
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -116,6 +116,23 @@
 // NOTE: this is the dev-board status pixel, distinct from PIN_LED_DATA (the
 // WS2812B ownership strip on GPIO 5) added with the LED module later.
 #define PIN_STATUS_RGB 2
+
+// ---------------------------------------------------------------------------
+// OLED display (optional — preferred over e-paper when present)
+// ---------------------------------------------------------------------------
+// SSD1306 128x64 I2C (e.g. UCTRONICS 0.96"). ~30ms refresh vs the e-paper's
+// ~4s, so it shows LIVE-ticking timers. The cheap "yellow/blue" panels are
+// monochrome with a FIXED top ~16px yellow / bottom blue split (not
+// controllable) — team color still comes from the LEDs. Auto-detected at boot:
+// if present it takes over the live game display; otherwise we use the e-paper.
+// It can also stand in for the TM1637 timer displays (shows both team times),
+// which is why SCL lands on GPIO 22 (the old TM1637 blue-CLK reservation).
+#define PIN_OLED_SDA    21
+#define PIN_OLED_SCL    22
+#define OLED_I2C_ADDR   0x3C
+#define OLED_WIDTH      128
+#define OLED_HEIGHT     64
+#define OLED_REFRESH_MS 200UL  // ~5 Hz live update; cheap, non-blocking
 
 // ---------------------------------------------------------------------------
 // Pin assignments — Control Point reference (see CLAUDE.md)

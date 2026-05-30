@@ -18,6 +18,7 @@
 #include "buttons.h"
 #include "statusled.h"
 #include "game_controlpoint.h"
+#include "oled.h"
 
 // Publish the current game state as a retained JSON payload (small, hand-built
 // to avoid pulling ArduinoJson into main). Called on each ownership change.
@@ -80,7 +81,10 @@ void setup() {
   statusLedSetup();
   gameSetup();    // after buttonsSetup: the game reads debounced button state
 
-  epaperSetup();  // draws the initial status screen
+  // Prefer the OLED for the live display if one is wired; the e-paper is the
+  // fallback. Both are initialized; only the chosen one is driven in loop().
+  oledSetup();
+  epaperSetup();
 }
 
 // Drive the onboard RGB from the GAME state: solid owner color when held, the
@@ -133,8 +137,16 @@ void loop() {
   const bool ownerChanged = gameConsumeOwnershipChanged();
   if (ownerChanged) publishGameState();
 
-  updateStatusLed();              // onboard RGB reflects ownership/capture
-  updateGameDisplay(ownerChanged);  // e-paper game screen (throttled)
+  updateStatusLed();  // onboard RGB reflects ownership/capture
+
+  // Live game display: OLED if present (fast, live-ticking), else e-paper.
+  if (oledPresent()) {
+    oledShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
+                 gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
+                 gameCapturingTeam(), gameCaptureElapsedMs());
+  } else {
+    updateGameDisplay(ownerChanged);  // e-paper game screen (throttled)
+  }
 
   // Lightweight heartbeat to Serial so we can confirm the loop is alive and
   // watch connection state without blocking. Non-blocking millis() timer.
