@@ -14,6 +14,7 @@
 #include "network.h"
 #include "epaper.h"
 #include "mqtt.h"
+#include "ota.h"
 
 // Handle an inbound MQTT command. Game logic (reset, mode changes, etc.) will
 // hang off this; for now we log so we can confirm the command path works.
@@ -49,11 +50,14 @@ void setup() {
   mqttSetup();
   mqttSetCommandHandler(onMqttCommand);
 
+  otaSetup();     // arms once WiFi is up, inside otaLoop()
+
   epaperSetup();  // draws the initial status screen
 }
 
 void loop() {
   networkLoop();        // drive WiFi connect/reconnect state machine
+  otaLoop();            // service OTA listener (arms once WiFi is up)
   mqttLoop();           // drive MQTT connect/reconnect + service messages
   pollSerialCommands(); // runtime provisioning (wifi/nodeid/mqtt/...)
 

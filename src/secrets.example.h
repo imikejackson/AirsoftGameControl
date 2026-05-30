@@ -14,3 +14,7 @@
 
 #define DEFAULT_WIFI_SSID  "YOUR_FIELD_SSID"
 #define DEFAULT_WIFI_PASS  "YOUR_WIFI_PASSWORD"
+
+// OTA update password. Empty string = no auth. Set a real password before
+// deploying nodes in the field.
+#define OTA_PASSWORD       ""
