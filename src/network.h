@@ -52,9 +52,11 @@ const String &nodeHostname();
 void setWifiCredentials(const String &ssid, const String &password);
 void setNodeId(const String &id);
 
-// Optional helper: parse simple Serial provisioning commands. Call from
-// loop() if you want runtime config over the Serial console. Recognized:
+// Parse a single Serial provisioning command line (already read + trimmed by
+// the caller). Returns true if recognized and handled. Recognized:
 //   wifi <ssid> <password>   set + save WiFi credentials, reconnect
 //   nodeid <id>              set + save node ID (reboot to apply hostname)
 //   netstatus                print wifiStatusString()
-void handleSerialConfig();
+// The caller (main) owns the single Serial reader and dispatches to each
+// module's handler, so modules never race for Serial input.
+bool handleNetworkSerialCommand(const String &line);

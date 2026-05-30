@@ -218,31 +218,27 @@ void setNodeId(const String &id) {
                 g_nodeId.c_str());
 }
 
-void handleSerialConfig() {
-  if (!Serial.available()) return;
-
-  String line = Serial.readStringUntil('\n');
-  line.trim();
-  if (line.length() == 0) return;
-
+bool handleNetworkSerialCommand(const String &line) {
   if (line.startsWith("wifi ")) {
     String rest = line.substring(5);
     rest.trim();
     int sp = rest.indexOf(' ');
     if (sp < 0) {
       Serial.println("[cfg] usage: wifi <ssid> <password>");
-      return;
+      return true;
     }
     String ssid = rest.substring(0, sp);
     String pass = rest.substring(sp + 1);
     setWifiCredentials(ssid, pass);
+    return true;
   } else if (line.startsWith("nodeid ")) {
     String id = line.substring(7);
     id.trim();
     if (id.length()) setNodeId(id);
+    return true;
   } else if (line == "netstatus") {
     Serial.printf("[net] %s\n", wifiStatusString().c_str());
-  } else {
-    Serial.println("[cfg] commands: wifi <ssid> <pass> | nodeid <id> | netstatus");
+    return true;
   }
+  return false;
 }

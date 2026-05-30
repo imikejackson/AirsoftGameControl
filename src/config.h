@@ -62,6 +62,20 @@
 #define NVS_NAMESPACE "airsoft"
 
 // ---------------------------------------------------------------------------
+// MQTT configuration
+// ---------------------------------------------------------------------------
+// Broker is the central Raspberry Pi. Default is an mDNS name; override at
+// runtime over Serial ("mqtt <host> <port>") — e.g. point at a numeric IP if
+// .local resolution isn't available, or a public test broker during bring-up.
+#define DEFAULT_MQTT_HOST "airsoft-pi.local"
+#define DEFAULT_MQTT_PORT 1883
+
+#define MQTT_HEARTBEAT_INTERVAL_MS  12000UL  // alive signal cadence (10-15s)
+#define MQTT_RETRY_INTERVAL_MS       3000UL  // initial reconnect backoff
+#define MQTT_RETRY_INTERVAL_MAX_MS  30000UL  // cap on reconnect backoff
+#define MQTT_BUFFER_SIZE              512     // PubSubClient packet buffer (bytes)
+
+// ---------------------------------------------------------------------------
 // Serial
 // ---------------------------------------------------------------------------
 #define SERIAL_BAUD 115200
