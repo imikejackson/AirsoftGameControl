@@ -9,6 +9,14 @@
 //
 
 // ---------------------------------------------------------------------------
+// Firmware version
+// ---------------------------------------------------------------------------
+// Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
+// the e-paper so you can confirm which build a node is running — especially
+// useful for spotting whether an OTA push actually took.
+#define FIRMWARE_VERSION 1
+
+// ---------------------------------------------------------------------------
 // Node type selection
 // ---------------------------------------------------------------------------
 // Select via a build flag in platformio.ini (-D NODE_TYPE_CONTROLPOINT, etc.)

@@ -10,6 +10,7 @@
 // node that uses both the e-paper and the TM1637s.
 //
 #include "epaper.h"
+#include "config.h"  // FIRMWARE_VERSION
 
 #include <GxEPD2_BW.h>
 #include <Fonts/FreeMonoBold9pt7b.h>
@@ -50,6 +51,14 @@ void drawScreen(const String &nodeName, const char *nodeType, bool connected,
     display.setTextSize(1);
     display.setCursor(4, 16);
     display.print(type);
+
+    // Firmware version, right-aligned on the header line.
+    String ver = "v" + String(FIRMWARE_VERSION);
+    int16_t bx, by;
+    uint16_t bw, bh;
+    display.getTextBounds(ver, 0, 16, &bx, &by, &bw, &bh);
+    display.setCursor(display.width() - bw - 4, 16);
+    display.print(ver);
 
     display.setFont(&FreeMonoBold9pt7b);
     display.setTextSize(2);
