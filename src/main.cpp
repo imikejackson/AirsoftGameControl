@@ -17,11 +17,23 @@
 #include "ota.h"
 #include "buttons.h"
 #include "statusled.h"
+#include "game_controlpoint.h"
 
-// Handle an inbound MQTT command. Game logic (reset, mode changes, etc.) will
-// hang off this; for now we log so we can confirm the command path works.
+// Publish the current game state as a retained JSON payload (small, hand-built
+// to avoid pulling ArduinoJson into main). Called on each ownership change.
+static void publishGameState() {
+  String payload = String("{\"owner\":\"") + teamName(gameOwner()) +
+                   "\",\"red_s\":" + String(gameCumulativeMs(TEAM_RED) / 1000) +
+                   ",\"blue_s\":" + String(gameCumulativeMs(TEAM_BLUE) / 1000) +
+                   "}";
+  mqttPublishState(payload);
+}
+
+// Handle an inbound MQTT command. Any payload containing "reset" zeroes the
+// game (covers both this node's command topic and airsoft/game/command).
 static void onMqttCommand(const String &topic, const String &payload) {
   Serial.printf("[cmd] %s -> %s\n", topic.c_str(), payload.c_str());
+  if (payload.indexOf("reset") >= 0) gameReset();
 }
 
 // Single owner of the Serial reader: read one line and dispatch it to each
@@ -34,8 +46,18 @@ static void pollSerialCommands() {
 
   if (handleNetworkSerialCommand(line)) return;
   if (handleMqttSerialCommand(line)) return;
-  Serial.println("[cfg] commands: wifi <ssid> <pass> | nodeid <id> | "
-                 "netstatus | mqtt <host> <port> | mqttstatus");
+  if (line == "reset") {
+    gameReset();
+    return;
+  }
+  if (line == "score") {
+    Serial.printf("[game] owner=%s red=%lus blue=%lus\n", teamName(gameOwner()),
+                  (unsigned long)(gameCumulativeMs(TEAM_RED) / 1000),
+                  (unsigned long)(gameCumulativeMs(TEAM_BLUE) / 1000));
+    return;
+  }
+  Serial.println("[cfg] commands: wifi <ssid> <pass> | nodeid <id> | netstatus "
+                 "| mqtt <host> <port> | mqttstatus | reset | score");
 }
 
 void setup() {
@@ -56,26 +78,46 @@ void setup() {
 
   buttonsSetup();
   statusLedSetup();
+  gameSetup();    // after buttonsSetup: the game reads debounced button state
 
   epaperSetup();  // draws the initial status screen
 }
 
-// Drive the onboard RGB from the live button state: red/blue while held, both
-// -> magenta, neither -> off. Only writes the pixel when the combination
-// changes. (A bring-up indicator; real team/ownership color will come from the
-// WS2812B strip module.)
-static void updateStatusLedFromButtons() {
-  const int code = (buttonPressed(TEAM_RED) ? 1 : 0) |
-                   (buttonPressed(TEAM_BLUE) ? 2 : 0);
-  static int lastCode = -1;
-  if (code == lastCode) return;
-  lastCode = code;
-  switch (code) {
-    case 1:  statusLedSetColor(60, 0, 0);  break;  // red held
-    case 2:  statusLedSetColor(0, 0, 60);  break;  // blue held
-    case 3:  statusLedSetColor(60, 0, 60); break;  // both held -> magenta
-    default: statusLedSetColor(0, 0, 0);   break;  // none -> off
+// Drive the onboard RGB from the GAME state: solid owner color when held, the
+// capturing team's color BLINKING during the 2.5 s capture hold, off when
+// neutral. Only writes the pixel when the color actually changes. (Bring-up
+// indicator; real ownership color will come from the WS2812B strip module.)
+static void updateStatusLed() {
+  uint8_t r = 0, g = 0, b = 0;
+  if (gameCaptureInProgress()) {
+    const bool on = (millis() / 200) % 2;  // ~2.5 Hz blink while capturing
+    if (on) (gameCapturingTeam() == TEAM_RED ? r : b) = 60;
+  } else {
+    const Team owner = gameOwner();
+    if (owner == TEAM_RED) r = 60;
+    else if (owner == TEAM_BLUE) b = 60;
   }
+  static uint8_t lr = 1, lg = 1, lb = 1;  // impossible init -> first write
+  if (r != lr || g != lg || b != lb) {
+    lr = r; lg = g; lb = b;
+    statusLedSetColor(r, g, b);
+  }
+}
+
+// Refresh the e-paper game screen. A full refresh blocks ~4 s, so: redraw
+// immediately on ownership change, otherwise only slowly AND only when no
+// button is held (so a refresh can never interrupt a capture attempt).
+static void updateGameDisplay(bool ownerChanged) {
+  static unsigned long lastDraw = 0;
+  const bool held = buttonPressed(TEAM_RED) || buttonPressed(TEAM_BLUE);
+  if (!ownerChanged &&
+      !(millis() - lastDraw >= GAME_EPAPER_REFRESH_MS && !held)) {
+    return;
+  }
+  lastDraw = millis();
+  epaperUpdateGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED) / 1000,
+                   gameCumulativeMs(TEAM_BLUE) / 1000, wifiConnected(),
+                   wifiIpString());
 }
 
 void loop() {
@@ -84,13 +126,15 @@ void loop() {
   mqttLoop();           // drive MQTT connect/reconnect + service messages
   pollSerialCommands(); // runtime provisioning (wifi/nodeid/mqtt/...)
 
-  buttonsLoop();                 // debounce + button edge events
-  updateStatusLedFromButtons();  // onboard RGB reflects button state
+  buttonsLoop();   // debounce + button edge events
+  gameLoop();      // capture countdown, ownership transfer, cumulative timers
 
-  // Update the e-paper only when identity/network status changes (the call is
-  // cheap until something differs, then it does one ~4 s refresh).
-  epaperUpdateStatus(nodeId(), nodeTypeStr(), wifiConnected(),
-                     wifiSsid(), wifiIpString());
+  // On an ownership change (capture or reset), report it over MQTT.
+  const bool ownerChanged = gameConsumeOwnershipChanged();
+  if (ownerChanged) publishGameState();
+
+  updateStatusLed();              // onboard RGB reflects ownership/capture
+  updateGameDisplay(ownerChanged);  // e-paper game screen (throttled)
 
   // Lightweight heartbeat to Serial so we can confirm the loop is alive and
   // watch connection state without blocking. Non-blocking millis() timer.
@@ -101,6 +145,6 @@ void loop() {
                   wifiStatusString().c_str(), mqttStatusString().c_str());
   }
 
-  // Game logic (capture hold, ownership/timers, strip color) layers on top of
-  // the debounced buttons above. Everything in this loop must stay non-blocking.
+  // Next: WS2812B ownership strip and TM1637 timer displays will consume the
+  // same game state. Everything in this loop must stay non-blocking.
 }

@@ -11,6 +11,7 @@
 // Call epaperUpdateStatus() each loop; it cheaply no-ops until something differs.
 //
 #include <Arduino.h>
+#include "types.h"
 
 // Initialize the panel and draw an initial "booting" screen. Call once in
 // setup(), after networkSetup() (so we can show whatever state exists).
@@ -21,3 +22,10 @@ void epaperSetup();
 // happens rarely. Pass current values from the network module.
 void epaperUpdateStatus(const String &nodeName, const char *nodeType,
                         bool connected, const String &ssid, const String &ip);
+
+// Control-point game screen: ownership + cumulative MM:SS per team, plus a
+// small network footer. Redraws ONLY when the content changes (same slow-
+// refresh caveat as above), so the CALLER must throttle how often it calls
+// this — see main: on ownership change, else slowly and only when idle.
+void epaperUpdateGame(const String &nodeName, Team owner, uint32_t redSecs,
+                      uint32_t blueSecs, bool connected, const String &ip);

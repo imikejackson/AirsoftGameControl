@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 2
+#define FIRMWARE_VERSION 3
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -94,6 +94,18 @@
 // Debounce window — a button must read stable this long before we accept the
 // new state (CLAUDE.md: 50ms minimum).
 #define BUTTON_DEBOUNCE_MS 50UL
+
+// ---------------------------------------------------------------------------
+// Game logic
+// ---------------------------------------------------------------------------
+// A team must hold their button continuously this long to capture the point
+// (CLAUDE.md: 2-3s to prevent accidental griefing).
+#define CAPTURE_HOLD_MS 2500UL
+
+// How often the e-paper may refresh cumulative times while idle. Kept slow:
+// a full refresh blocks ~4s, so we only do it when no button is held and at
+// most this often. The live scoreboard is the MQTT dashboard's job.
+#define GAME_EPAPER_REFRESH_MS 15000UL
 
 // ---------------------------------------------------------------------------
 // Onboard status RGB LED

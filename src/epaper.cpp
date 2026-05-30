@@ -87,6 +87,75 @@ void drawScreen(const String &nodeName, const char *nodeType, bool connected,
   display.hibernate();  // low power; keeps the image without refreshing
 }
 
+// Format seconds as M:SS (minutes may exceed 59 in a long hold).
+String fmtTime(uint32_t secs) {
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%lu:%02lu", (unsigned long)(secs / 60),
+           (unsigned long)(secs % 60));
+  return String(buf);
+}
+
+const char *ownerLabel(Team owner) {
+  switch (owner) {
+    case TEAM_RED:  return "RED";
+    case TEAM_BLUE: return "BLUE";
+    default:        return "NEUTRAL";
+  }
+}
+
+void drawGameScreen(const String &nodeName, Team owner, uint32_t redSecs,
+                    uint32_t blueSecs, bool connected, const String &ip) {
+  String name = nodeName;
+  name.toUpperCase();
+
+  display.setRotation(1);  // landscape: 250 wide x 122 tall
+  display.setTextColor(GxEPD_BLACK);
+  display.setFullWindow();
+  display.firstPage();
+  do {
+    display.fillScreen(GxEPD_WHITE);
+
+    // Header: node name (bold) + firmware version (right-aligned).
+    display.setFont(&FreeMonoBold9pt7b);
+    display.setTextSize(1);
+    display.setCursor(4, 14);
+    display.print(name);
+
+    String ver = "v" + String(FIRMWARE_VERSION);
+    int16_t bx, by;
+    uint16_t bw, bh;
+    display.getTextBounds(ver, 0, 14, &bx, &by, &bw, &bh);
+    display.setCursor(display.width() - bw - 4, 14);
+    display.print(ver);
+
+    // Ownership line.
+    display.setFont(&FreeMono9pt7b);
+    display.setCursor(4, 34);
+    display.print("Owner: ");
+    display.print(ownerLabel(owner));
+
+    display.drawFastHLine(0, 42, display.width(), GxEPD_BLACK);
+
+    // Cumulative times, large.
+    display.setFont(&FreeMonoBold9pt7b);
+    display.setTextSize(2);
+    display.setCursor(4, 70);
+    display.print("R ");
+    display.print(fmtTime(redSecs));
+    display.setCursor(4, 98);
+    display.print("B ");
+    display.print(fmtTime(blueSecs));
+
+    // Footer: network state.
+    display.setFont(&FreeMono9pt7b);
+    display.setTextSize(1);
+    display.setCursor(4, 118);
+    display.print(connected ? ip : String("offline"));
+  } while (display.nextPage());
+
+  display.hibernate();
+}
+
 }  // namespace
 
 void epaperSetup() {
@@ -103,5 +172,15 @@ void epaperUpdateStatus(const String &nodeName, const char *nodeType,
   if (key == g_shown) return;  // nothing changed — skip the slow refresh
 
   drawScreen(nodeName, nodeType, connected, ssid, ip);
+  g_shown = key;
+}
+
+void epaperUpdateGame(const String &nodeName, Team owner, uint32_t redSecs,
+                      uint32_t blueSecs, bool connected, const String &ip) {
+  String key = "game|" + String((int)owner) + "|" + String(redSecs) + "|" +
+               String(blueSecs) + "|" + (connected ? ip : String("offline"));
+  if (key == g_shown) return;  // identical content — skip the slow refresh
+
+  drawGameScreen(nodeName, owner, redSecs, blueSecs, connected, ip);
   g_shown = key;
 }
