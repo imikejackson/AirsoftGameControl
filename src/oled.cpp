@@ -36,6 +36,17 @@ bool oledSetup() {
   Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
   Wire.setClock(400000);  // fast I2C for snappy refreshes
 
+  // Real presence check: probe the bus for an ACK at the panel's address.
+  // Adafruit_SSD1306::begin() returns true even with NO panel connected (it
+  // only checks buffer allocation, not the I2C ACK), so without this the
+  // e-paper fallback would never trigger.
+  Wire.beginTransmission(OLED_I2C_ADDR);
+  if (Wire.endTransmission() != 0) {
+    g_present = false;
+    Serial.println("[oled] no panel on I2C bus — falling back to e-paper");
+    return false;
+  }
+
   g_present = g_oled.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR);
   if (g_present) {
     g_oled.clearDisplay();
@@ -46,7 +57,7 @@ bool oledSetup() {
     g_oled.display();
     Serial.println("[oled] SSD1306 detected — using OLED for live display");
   } else {
-    Serial.println("[oled] not found — falling back to e-paper");
+    Serial.println("[oled] begin() failed — falling back to e-paper");
   }
   return g_present;
 }
