@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 1
+#define FIRMWARE_VERSION 2
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -87,6 +87,23 @@
 // Serial
 // ---------------------------------------------------------------------------
 #define SERIAL_BAUD 115200
+
+// ---------------------------------------------------------------------------
+// Buttons / input
+// ---------------------------------------------------------------------------
+// Debounce window — a button must read stable this long before we accept the
+// new state (CLAUDE.md: 50ms minimum).
+#define BUTTON_DEBOUNCE_MS 50UL
+
+// ---------------------------------------------------------------------------
+// Onboard status RGB LED
+// ---------------------------------------------------------------------------
+// Single WS2812/NeoPixel on the dev board, GPIO 2. Driven via the ESP32 core's
+// neopixelWrite() — no library needed. GPIO 2 is a strapping pin, but we only
+// drive it after boot (the data line idles beforehand), so it's safe here.
+// NOTE: this is the dev-board status pixel, distinct from PIN_LED_DATA (the
+// WS2812B ownership strip on GPIO 5) added with the LED module later.
+#define PIN_STATUS_RGB 2
 
 // ---------------------------------------------------------------------------
 // Pin assignments — Control Point reference (see CLAUDE.md)

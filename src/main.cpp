@@ -15,6 +15,8 @@
 #include "epaper.h"
 #include "mqtt.h"
 #include "ota.h"
+#include "buttons.h"
+#include "statusled.h"
 
 // Handle an inbound MQTT command. Game logic (reset, mode changes, etc.) will
 // hang off this; for now we log so we can confirm the command path works.
@@ -52,7 +54,28 @@ void setup() {
 
   otaSetup();     // arms once WiFi is up, inside otaLoop()
 
+  buttonsSetup();
+  statusLedSetup();
+
   epaperSetup();  // draws the initial status screen
+}
+
+// Drive the onboard RGB from the live button state: red/blue while held, both
+// -> magenta, neither -> off. Only writes the pixel when the combination
+// changes. (A bring-up indicator; real team/ownership color will come from the
+// WS2812B strip module.)
+static void updateStatusLedFromButtons() {
+  const int code = (buttonPressed(TEAM_RED) ? 1 : 0) |
+                   (buttonPressed(TEAM_BLUE) ? 2 : 0);
+  static int lastCode = -1;
+  if (code == lastCode) return;
+  lastCode = code;
+  switch (code) {
+    case 1:  statusLedSetColor(60, 0, 0);  break;  // red held
+    case 2:  statusLedSetColor(0, 0, 60);  break;  // blue held
+    case 3:  statusLedSetColor(60, 0, 60); break;  // both held -> magenta
+    default: statusLedSetColor(0, 0, 0);   break;  // none -> off
+  }
 }
 
 void loop() {
@@ -60,6 +83,9 @@ void loop() {
   otaLoop();            // service OTA listener (arms once WiFi is up)
   mqttLoop();           // drive MQTT connect/reconnect + service messages
   pollSerialCommands(); // runtime provisioning (wifi/nodeid/mqtt/...)
+
+  buttonsLoop();                 // debounce + button edge events
+  updateStatusLedFromButtons();  // onboard RGB reflects button state
 
   // Update the e-paper only when identity/network status changes (the call is
   // cheap until something differs, then it does one ~4 s refresh).
@@ -75,6 +101,6 @@ void loop() {
                   wifiStatusString().c_str(), mqttStatusString().c_str());
   }
 
-  // Game logic (buttons / displays / LEDs) will be added here. Everything in
-  // this loop must remain non-blocking.
+  // Game logic (capture hold, ownership/timers, strip color) layers on top of
+  // the debounced buttons above. Everything in this loop must stay non-blocking.
 }
