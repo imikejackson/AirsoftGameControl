@@ -43,7 +43,7 @@ bool oledSetup() {
   Wire.beginTransmission(OLED_I2C_ADDR);
   if (Wire.endTransmission() != 0) {
     g_present = false;
-    Serial.println("[oled] no panel on I2C bus — falling back to e-paper");
+    Serial.println("[oled] no panel on I2C bus — OLED display disabled");
     return false;
   }
 

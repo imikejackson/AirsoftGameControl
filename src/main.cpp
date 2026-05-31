@@ -17,6 +17,7 @@
 #include "statusled.h"
 #include "game_controlpoint.h"
 #include "oled.h"
+#include "lcd.h"
 
 // Publish the current game state as a retained JSON payload (small, hand-built
 // to avoid pulling ArduinoJson into main). Called on each ownership change.
@@ -80,6 +81,7 @@ void setup() {
   gameSetup();    // after buttonsSetup: the game reads debounced button state
 
   oledSetup();  // live display; the game still runs headless if absent
+  lcdSetup();   // ST7789 control-point display (team color + big timers)
 }
 
 // Drive the onboard RGB from the GAME state: solid owner color when held, the
@@ -118,10 +120,15 @@ void loop() {
 
   updateStatusLed();  // onboard RGB reflects ownership/capture
 
-  // Live game display on the OLED (no-ops internally if no panel is present).
+  // Live game displays. Both are driven (different buses): the OLED (I2C) and
+  // the ST7789 LCD (SPI). Each throttles itself and no-ops if not connected.
   oledShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
                gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
                gameCapturingTeam(), gameCaptureElapsedMs());
+  lcdShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
+              gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
+              gameCapturingTeam(), gameCaptureElapsedMs(), wifiConnected(),
+              wifiIpString());
 
   // Lightweight heartbeat to Serial so we can confirm the loop is alive and
   // watch connection state without blocking. Non-blocking millis() timer.

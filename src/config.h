@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 6
+#define FIRMWARE_VERSION 14
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -100,7 +100,7 @@
 // ---------------------------------------------------------------------------
 // A team must hold their button continuously this long to capture the point
 // (CLAUDE.md: 2-3s to prevent accidental griefing).
-#define CAPTURE_HOLD_MS 2500UL
+#define CAPTURE_HOLD_MS 1500UL
 
 // ---------------------------------------------------------------------------
 // Onboard status RGB LED
@@ -127,6 +127,15 @@
 #define OLED_WIDTH      128
 #define OLED_HEIGHT     64
 #define OLED_REFRESH_MS 200UL  // ~5 Hz live update; cheap, non-blocking
+
+// ---------------------------------------------------------------------------
+// ST7789 LCD (2" 240x320 IPS, Waveshare ST7789V) — control-point display
+// ---------------------------------------------------------------------------
+// Driven by TFT_eSPI, whose pins/driver are configured via build_flags in
+// platformio.ini (SCK=18, MOSI=23, CS=4, DC=17, RST=16; BL tied to 3.3V).
+// Landscape, team-colored background + a large 7-segment timer. No presence
+// probe (SPI has no ACK); if unwired the writes simply go nowhere.
+#define LCD_REFRESH_MS 200UL
 
 // ---------------------------------------------------------------------------
 // Pin assignments — Control Point reference (see CLAUDE.md)
