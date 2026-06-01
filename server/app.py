@@ -280,6 +280,17 @@ INDEX_HTML = r"""<!doctype html>
         border:1px solid #3a414c; border-radius:6px; padding:3px 8px; cursor:pointer; }
   button.reset:hover { background:#2a2f37; }
   .empty { color:#7d8794; padding:40px; text-align:center; }
+  #results { display:none; margin:14px 18px 0; padding:16px 20px; border-radius:12px;
+        background:#15181d; border:1px solid #3a414c; }
+  #results .rtitle { font-size:13px; letter-spacing:.22em; font-weight:800; color:#ffcf5c; }
+  #results .rstats { display:flex; gap:36px; flex-wrap:wrap; margin-top:12px; }
+  #results .rlbl { font-size:11px; color:#7d8794; letter-spacing:.12em; }
+  #results .rval { font-size:26px; font-weight:800; font-variant-numeric:tabular-nums; margin-top:2px; }
+  #results .rred { color:#ff6b6b; } #results .rblue { color:#6b9bff; }
+  #results .rsep { color:#7d8794; font-size:17px; padding:0 6px; }
+  #results .lead { text-decoration:underline; text-underline-offset:4px; }
+  #results .rwin { margin-top:12px; font-size:22px; font-weight:800; letter-spacing:.04em; }
+  #results .rwin .ww-red { color:#ff6b6b; } #results .rwin .ww-blue { color:#6b9bff; }
 </style>
 </head>
 <body>
@@ -292,6 +303,16 @@ INDEX_HTML = r"""<!doctype html>
   <button class="btn go" id="startStop">Start</button>
   <button class="btn danger" id="resetAll">Reset All</button>
 </header>
+<div id="results">
+  <div class="rtitle"></div>
+  <div class="rstats">
+    <div><div class="rlbl">TOTAL HELD TIME</div>
+      <div class="rval"><span class="rred"></span><span class="rsep">vs</span><span class="rblue"></span></div></div>
+    <div><div class="rlbl">NODES HELD AT END</div>
+      <div class="rval"><span class="rredn"></span><span class="rsep">vs</span><span class="rbluen"></span></div></div>
+  </div>
+  <div class="rwin"></div>
+</div>
 <div id="grid"><div class="empty">Waiting for nodes to report…</div></div>
 
 <script>
@@ -300,6 +321,7 @@ const statusEl = document.getElementById('status');
 const clockEl = document.getElementById('clock');
 const minutesEl = document.getElementById('minutes');
 const startStop = document.getElementById('startStop');
+const resultsEl = document.getElementById('results');
 const nodes = {};   // key -> {data, arrival, lastMsg, stale}
 let game = {running:false, remaining_s:0, duration_s:900};
 
@@ -329,6 +351,31 @@ function renderGame(){
   startStop.textContent = game.running ? 'Stop' : 'Start';
   startStop.classList.toggle('go', !game.running);
   startStop.classList.toggle('danger', game.running);
+  renderResults();
+}
+// End-of-game stats: aggregate held time + nodes held per team, and a winner.
+function renderResults(){
+  const over = !game.running && game.remaining_s < game.duration_s;
+  if (!over){ resultsEl.style.display = 'none'; return; }
+  let redT = 0, blueT = 0, redN = 0, blueN = 0;
+  for (const k in nodes){
+    const d = nodes[k].data;
+    redT += d.red_s || 0; blueT += d.blue_s || 0;
+    if (d.owner === 'red') redN++; else if (d.owner === 'blue') blueN++;
+  }
+  const q = s => resultsEl.querySelector(s);
+  resultsEl.style.display = '';
+  q('.rtitle').textContent = (game.remaining_s === 0) ? 'GAME OVER — TIME!' : 'GAME STOPPED';
+  q('.rred').textContent = fmt(redT);  q('.rblue').textContent = fmt(blueT);
+  q('.rredn').textContent = redN;      q('.rbluen').textContent = blueN;
+  q('.rred').classList.toggle('lead', redT > blueT);
+  q('.rblue').classList.toggle('lead', blueT > redT);
+  q('.rredn').classList.toggle('lead', redN > blueN);
+  q('.rbluen').classList.toggle('lead', blueN > redN);
+  const win = redT > blueT ? ['RED','ww-red'] : blueT > redT ? ['BLUE','ww-blue'] : null;
+  q('.rwin').innerHTML = win
+      ? ('WINNER (held time): <span class="'+win[1]+'">'+win[0]+'</span>')
+      : 'TIE on total held time';
 }
 function ensureTile(key){
   let el = document.getElementById('tile-'+key);
@@ -365,6 +412,7 @@ function render(){
     el.querySelector('.cap').textContent = (!n.stale && n.data.owner && n.data.owner!=='none')
         ? ('held by ' + n.data.owner) : (n.stale ? 'offline' : 'neutral');
   }
+  renderResults();
 }
 // Controls.
 grid.addEventListener('click', (e) => {
