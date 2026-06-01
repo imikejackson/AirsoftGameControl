@@ -17,7 +17,7 @@ import time
 from flask import Flask, Response, request, jsonify, render_template_string
 import paho.mqtt.client as mqtt
 
-DASH_VERSION = 2            # bump on every dashboard change; shown in the header
+DASH_VERSION = 3            # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -310,6 +310,7 @@ INDEX_HTML = r"""<!doctype html>
   <span class="ctl"><input id="minutes" type="number" min="1" max="120" value="15"> min</span>
   <button class="btn go" id="startStop">Start</button>
   <button class="btn danger" id="resetAll">Reset All</button>
+  <button class="btn" id="audioBtn">🔇 Audio</button>
 </header>
 <div id="results">
   <div class="rtitle"></div>
@@ -333,6 +334,60 @@ const startStop = document.getElementById('startStop');
 const resultsEl = document.getElementById('results');
 const nodes = {};   // key -> {data, arrival, lastMsg, stale}
 let game = {running:false, remaining_s:0, duration_s:900};
+
+// --- Audio announcements (browser TTS + Web Audio tones) ---
+let audioOn = false, audioCtx = null;
+const SUMMARY_MS = 45000;   // state-summary cadence (ms)
+function cap(s){ return s ? s[0].toUpperCase() + s.slice(1) : s; }
+function joinNames(a){ a = a.map(cap);
+  if (!a.length) return ''; if (a.length === 1) return a[0];
+  if (a.length === 2) return a[0] + ' and ' + a[1];
+  return a.slice(0,-1).join(', ') + ', and ' + a[a.length-1]; }
+function tone(team){
+  if (!audioOn) return;
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    const t = audioCtx.currentTime, o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    const base = team === 'red' ? 420 : team === 'blue' ? 620 : 520;
+    o.type = 'sine'; o.frequency.setValueAtTime(base, t);
+    o.frequency.exponentialRampToValueAtTime(base*1.5, t+0.12);
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.3, t+0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t+0.28);
+    o.connect(g).connect(audioCtx.destination); o.start(t); o.stop(t+0.3);
+  } catch(e){}
+}
+function say(text){
+  if (!audioOn || !('speechSynthesis' in window) || !text) return;
+  const u = new SpeechSynthesisUtterance(text); u.rate = 1.0; speechSynthesis.speak(u);
+}
+function gameStats(){
+  let redT=0, blueT=0, redN=0, blueN=0;
+  for (const k in nodes){ const d = nodes[k].data;
+    redT += d.red_s||0; blueT += d.blue_s||0;
+    if (d.owner==='red') redN++; else if (d.owner==='blue') blueN++; }
+  return {redT, blueT, redN, blueN};
+}
+function winnerText(){ const s = gameStats();
+  if (s.redT > s.blueT) return {team:'red', say:'Red wins'};
+  if (s.blueT > s.redT) return {team:'blue', say:'Blue wins'};
+  return {team:null, say:"it's a tie"}; }
+function summarize(){
+  const red=[], blue=[], neu=[];
+  for (const k in nodes){ const n = nodes[k]; if (n.stale) continue;
+    const id = n.data.id;
+    if (n.data.owner==='red') red.push(id);
+    else if (n.data.owner==='blue') blue.push(id); else neu.push(id); }
+  const total = red.length + blue.length + neu.length;
+  if (!total) return '';
+  if (red.length === total) return 'Red holds all ' + total + ' points.';
+  if (blue.length === total) return 'Blue holds all ' + total + ' points.';
+  const parts = [];
+  if (red.length) parts.push('Red holds ' + joinNames(red));
+  if (blue.length) parts.push('Blue holds ' + joinNames(blue));
+  if (neu.length) parts.push(joinNames(neu) + (neu.length===1 ? ' is neutral' : ' are neutral'));
+  return parts.join('. ') + '.';
+}
 
 function fmt(sec){
   sec = Math.max(0, Math.floor(sec));
@@ -366,12 +421,7 @@ function renderGame(){
 function renderResults(){
   const over = !game.running && game.remaining_s < game.duration_s;
   if (!over){ resultsEl.style.display = 'none'; return; }
-  let redT = 0, blueT = 0, redN = 0, blueN = 0;
-  for (const k in nodes){
-    const d = nodes[k].data;
-    redT += d.red_s || 0; blueT += d.blue_s || 0;
-    if (d.owner === 'red') redN++; else if (d.owner === 'blue') blueN++;
-  }
+  const {redT, blueT, redN, blueN} = gameStats();
   const q = s => resultsEl.querySelector(s);
   resultsEl.style.display = 'block';
   q('.rtitle').textContent = (game.remaining_s === 0) ? 'GAME OVER — TIME!' : 'GAME STOPPED';
@@ -449,15 +499,53 @@ es.onopen = () => statusEl.textContent = 'live';
 es.onerror = () => statusEl.textContent = 'reconnecting…';
 es.onmessage = (e) => {
   const d = JSON.parse(e.data);
-  if (d.kind === 'game') { game = d; renderGame(); return; }
+  if (d.kind === 'game') {
+    if (audioOn) {
+      const mins = Math.round(d.duration_s/60);
+      if (!game.running && d.running) {
+        tone('blue'); say('Game on. ' + mins + (mins===1?' minute.':' minutes.'));
+      } else if (game.running && !d.running && d.remaining_s === 0) {
+        const w = winnerText(); tone(w.team||'red'); say('Time! ' + w.say + '.');
+      } else if (game.running && d.running && game.remaining_s > 60 && d.remaining_s <= 60) {
+        say('One minute remaining.');
+      }
+    }
+    game = d; renderGame(); return;
+  }
   const key = d.type + '/' + d.id;
   const prev = nodes[key];
+  const prevOwner = prev ? prev.data.owner : null;
   const changed = !prev || prev.data.owner !== d.owner
       || prev.data.red_s !== d.red_s || prev.data.blue_s !== d.blue_s;
   nodes[key] = { data: d, lastMsg: Date.now(),
                  arrival: changed ? Date.now() : prev.arrival };
   render();
+  if (audioOn && prev && prevOwner !== d.owner && (d.owner === 'red' || d.owner === 'blue')) {
+    tone(d.owner);
+    say(cap(d.id) + ' taken by ' + cap(d.owner) + '.');
+  }
 };
+// Audio enable toggle — the tap also unlocks browser audio for this device.
+const audioBtn = document.getElementById('audioBtn');
+audioBtn.onclick = () => {
+  audioOn = !audioOn;
+  audioBtn.textContent = audioOn ? '🔊 Audio' : '🔇 Audio';
+  audioBtn.classList.toggle('go', audioOn);
+  if (audioOn) {
+    try { if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+          audioCtx.resume(); } catch(e){}
+    say('Audio enabled.');
+  } else if ('speechSynthesis' in window) {
+    speechSynthesis.cancel();
+  }
+};
+// Periodic spoken state summary while a round is running.
+setInterval(() => {
+  if (audioOn && game.running) {
+    const s = summarize();
+    if (s && !(speechSynthesis.speaking || speechSynthesis.pending)) say(s);
+  }
+}, SUMMARY_MS);
 setInterval(render, 1000);
 renderGame();
 </script>
