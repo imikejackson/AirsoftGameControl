@@ -8,6 +8,7 @@
 // responsive at all times.
 //
 #include <Arduino.h>
+#include <ArduinoJson.h>
 
 #include "config.h"
 #include "network.h"
@@ -35,7 +36,11 @@ static void publishGameState() {
 static void onMqttCommand(const String &topic, const String &payload) {
   Serial.printf("[cmd] %s -> %s\n", topic.c_str(), payload.c_str());
   if (topic == "airsoft/game/state") {
-    gameSetRunning(payload.indexOf("true") >= 0);
+    JsonDocument doc;
+    if (deserializeJson(doc, payload)) return;  // bad JSON -> ignore
+    long rem = doc["remaining_s"] | -1L;
+    if (rem >= 0) gameSetCountdown((uint32_t)rem * 1000UL);
+    gameSetRunning(doc["running"] | false);
     return;
   }
   if (payload.indexOf("reset") >= 0) gameReset();
@@ -131,10 +136,12 @@ void loop() {
   oledShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
                gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
                gameCapturingTeam(), gameCaptureElapsedMs());
+  const int32_t remainingS =
+      gameHasClock() ? (int32_t)(gameRemainingMs() / 1000) : -1;
   lcdShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
               gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
               gameCapturingTeam(), gameCaptureElapsedMs(), wifiConnected(),
-              wifiIpString(), gameRunning());
+              wifiIpString(), gameRunning(), remainingS);
 
   // Lightweight heartbeat to Serial so we can confirm the loop is alive and
   // watch connection state without blocking. Non-blocking millis() timer.

@@ -2,13 +2,12 @@
 """Airsoft Control Point — live web dashboard + game controls.
 
 Subscribes to the MQTT broker, keeps live node state in memory, and serves a
-self-updating scoreboard over Server-Sent Events. Also publishes game commands
-(reset all / reset one node) back to the broker. Single file: Flask +
+self-updating scoreboard over Server-Sent Events. It is also the GAME-CLOCK
+AUTHORITY: it owns the countdown, publishes the retained airsoft/game/state
+(running + remaining_s) ~1x/s, and ends the round at zero. Single file: Flask +
 paho-mqtt with all HTML/JS embedded. Nodes are auto-discovered.
 
-The firmware publishes game state on ownership change (plus heartbeats for
-liveness), so the browser extrapolates the owning team's ticking time between
-captures. Open http://<pi>:8080  (e.g. http://airsoft-pi.local:8080).
+Open http://<pi>:8080  (e.g. http://airsoft-pi.local:8080).
 """
 import json
 import queue
@@ -22,6 +21,7 @@ MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
 HTTP_PORT = 8080
+DEFAULT_DURATION_S = 15 * 60
 
 app = Flask(__name__)
 
@@ -29,18 +29,41 @@ _nodes = {}                 # "type/id" -> node dict
 _nodes_lock = threading.Lock()
 _subs = []                  # list[queue.Queue] for SSE clients
 _subs_lock = threading.Lock()
-_client = None              # the paho client, for publishing commands
-_game_running = True        # authoritative run state (from airsoft/game/state)
+_client = None              # the paho client, for publishing
+
+# Authoritative game clock (this server owns it).
+_game = {"running": False, "remaining_s": float(DEFAULT_DURATION_S),
+         "duration_s": DEFAULT_DURATION_S}
+_game_lock = threading.Lock()
 
 
-def _broadcast(node):
-    data = json.dumps(node)
+def _broadcast(obj):
+    data = json.dumps(obj)
     with _subs_lock:
         for q in list(_subs):
             try:
                 q.put_nowait(data)
             except queue.Full:
                 pass
+
+
+def _game_payload():
+    with _game_lock:
+        return {"kind": "game", "running": _game["running"],
+                "remaining_s": int(round(_game["remaining_s"])),
+                "duration_s": _game["duration_s"]}
+
+
+def _publish_game():
+    """Push the game clock to the broker (retained, authoritative) and the UI."""
+    p = _game_payload()
+    if _client is not None:
+        _client.publish("airsoft/game/state",
+                        json.dumps({"running": p["running"],
+                                    "remaining_s": p["remaining_s"],
+                                    "duration_s": p["duration_s"]}),
+                        qos=1, retain=True)
+    _broadcast(p)
 
 
 def _touch(ntype, nid):
@@ -57,22 +80,16 @@ def _touch(ntype, nid):
 def _on_connect(client, userdata, flags, rc, *args):
     print(f"[dash] connected to broker (rc={rc}); subscribing to {TOPIC}")
     client.subscribe(TOPIC)
+    _publish_game()  # establish the current (idle) game state on the bus
 
 
 def _on_message(client, userdata, msg):
-    payload = msg.payload.decode("utf-8", "ignore").strip()
-
-    # Authoritative game run state (retained), e.g. {"running": true}.
-    if msg.topic == "airsoft/game/state":
-        global _game_running
-        _game_running = "true" in payload.lower()
-        _broadcast({"kind": "game", "running": _game_running})
-        return
-
+    # The dashboard is the author of airsoft/game/* — ignore those on the way in.
     parts = msg.topic.split("/")
     if len(parts) < 4 or parts[0] != "airsoft" or parts[1] == "game":
         return
     ntype, nid, kind = parts[1], parts[2], parts[3]
+    payload = msg.payload.decode("utf-8", "ignore").strip()
 
     with _nodes_lock:
         n = _touch(ntype, nid)
@@ -112,6 +129,26 @@ def _mqtt_loop():
             time.sleep(3)
 
 
+def _clock_loop():
+    """Tick the countdown and republish on each whole-second change."""
+    last = time.time()
+    last_pub = None
+    while True:
+        time.sleep(0.2)
+        now = time.time()
+        dt, last = now - last, now
+        with _game_lock:
+            if _game["running"] and _game["remaining_s"] > 0:
+                _game["remaining_s"] = max(0.0, _game["remaining_s"] - dt)
+                if _game["remaining_s"] <= 0:
+                    _game["remaining_s"] = 0.0
+                    _game["running"] = False  # game over
+            cur = (int(round(_game["remaining_s"])), _game["running"])
+        if cur != last_pub:
+            last_pub = cur
+            _publish_game()
+
+
 @app.route("/")
 def index():
     return render_template_string(INDEX_HTML)
@@ -124,7 +161,7 @@ def events():
         with _subs_lock:
             _subs.append(q)
         try:
-            yield f"data: {json.dumps({'kind': 'game', 'running': _game_running})}\n\n"
+            yield f"data: {json.dumps(_game_payload())}\n\n"
             with _nodes_lock:
                 snap = [dict(n) for n in _nodes.values()]
             for n in snap:
@@ -142,30 +179,43 @@ def events():
 
 @app.route("/api/command", methods=["POST"])
 def command():
-    """Publish a game command. Body: {scope:"all"} or {scope:"node",type,id};
-    optional action (default "reset"). Commands are NEVER retained."""
     if _client is None:
         return jsonify(ok=False, error="broker not connected"), 503
     body = request.get_json(force=True, silent=True) or {}
-    action = body.get("action", "reset")
     scope = body.get("scope")
+    action = body.get("action", "reset")
 
     if scope == "game":
-        # Start/Stop sets the retained, authoritative run state.
-        running = (action == "start")
-        _client.publish("airsoft/game/state",
-                        json.dumps({"running": running}), qos=1, retain=True)
-        print(f"[dash] game/state -> running={running}")
-        return jsonify(ok=True, running=running)
-    elif scope == "all":
-        topic = "airsoft/game/command"
-        payload = "reset_all" if action == "reset" else action
+        if action == "start":            # fresh round: reset scores + full clock
+            with _game_lock:
+                mins = float(body.get("minutes", _game["duration_s"] / 60))
+                _game["duration_s"] = max(1, int(mins * 60))
+                _game["remaining_s"] = float(_game["duration_s"])
+                _game["running"] = True
+            _client.publish("airsoft/game/command", "reset_all", qos=1, retain=False)
+            _publish_game()
+        elif action == "stop":           # freeze everything
+            with _game_lock:
+                _game["running"] = False
+            _publish_game()
+        elif action == "settime":        # set duration (and idle countdown)
+            with _game_lock:
+                mins = float(body.get("minutes", 15))
+                _game["duration_s"] = max(1, int(mins * 60))
+                if not _game["running"]:
+                    _game["remaining_s"] = float(_game["duration_s"])
+            _publish_game()
+        else:
+            return jsonify(ok=False, error="bad action"), 400
+        return jsonify(ok=True)
+
+    if scope == "all":
+        topic, payload = "airsoft/game/command", "reset_all"
     elif scope == "node":
         ntype, nid = body.get("type"), body.get("id")
         if not ntype or not nid:
             return jsonify(ok=False, error="missing type/id"), 400
-        topic = f"airsoft/{ntype}/{nid}/command"
-        payload = action
+        topic, payload = f"airsoft/{ntype}/{nid}/command", "reset"
     else:
         return jsonify(ok=False, error="bad scope"), 400
 
@@ -184,16 +234,24 @@ INDEX_HTML = r"""<!doctype html>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin:0; font-family: system-ui, sans-serif; background:#0d0f12; color:#e8e8e8; }
-  header { padding:14px 18px; background:#15181d; border-bottom:1px solid #262b33;
-           display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+  header { padding:12px 18px; background:#15181d; border-bottom:1px solid #262b33;
+           display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
   header h1 { font-size:18px; margin:0; font-weight:600; letter-spacing:.04em; }
-  header .sub { color:#7d8794; font-size:13px; }
   #status { font-size:13px; color:#7d8794; }
   .spacer { margin-left:auto; }
+  #clock { font-size:34px; font-weight:800; font-variant-numeric: tabular-nums;
+           letter-spacing:.02em; }
+  #clock.low { color:#ff5c5c; } #clock.over { color:#ff5c5c; }
+  #clock.idle { color:#7d8794; }
+  .ctl { display:flex; align-items:center; gap:8px; }
+  input#minutes { width:56px; font:inherit; font-size:14px; text-align:center;
+        background:#0d0f12; color:#e8e8e8; border:1px solid #3a414c; border-radius:6px; padding:5px; }
   button.btn { font:inherit; font-size:13px; font-weight:600; color:#e8e8e8;
         background:#2a2f37; border:1px solid #3a414c; border-radius:8px;
         padding:7px 12px; cursor:pointer; }
   button.btn:hover { background:#343a44; }
+  button.btn.go { background:#1d6f33; border-color:#2a9648; }
+  button.btn.go:hover { background:#23843d; }
   button.btn.danger { background:#7a1d24; border-color:#a32a33; }
   button.btn.danger:hover { background:#94242c; }
   #grid { display:grid; gap:14px; padding:18px;
@@ -226,11 +284,12 @@ INDEX_HTML = r"""<!doctype html>
 </head>
 <body>
 <header>
-  <h1>AIRSOFT CONTROL POINTS</h1>
-  <span class="sub">live scoreboard</span>
-  <span class="spacer"></span>
+  <h1>AIRSOFT</h1>
   <span id="status">connecting…</span>
-  <button class="btn" id="startStop">Stop</button>
+  <span class="spacer"></span>
+  <span id="clock" class="idle">--:--</span>
+  <span class="ctl"><input id="minutes" type="number" min="1" max="120" value="15"> min</span>
+  <button class="btn go" id="startStop">Start</button>
   <button class="btn danger" id="resetAll">Reset All</button>
 </header>
 <div id="grid"><div class="empty">Waiting for nodes to report…</div></div>
@@ -238,7 +297,11 @@ INDEX_HTML = r"""<!doctype html>
 <script>
 const grid = document.getElementById('grid');
 const statusEl = document.getElementById('status');
-const nodes = {};   // key -> {data, arrival}
+const clockEl = document.getElementById('clock');
+const minutesEl = document.getElementById('minutes');
+const startStop = document.getElementById('startStop');
+const nodes = {};   // key -> {data, arrival, lastMsg, stale}
+let game = {running:false, remaining_s:0, duration_s:900};
 
 function fmt(sec){
   sec = Math.max(0, Math.floor(sec));
@@ -247,7 +310,8 @@ function fmt(sec){
 }
 function liveSecs(n, team){
   const base = team === 'red' ? (n.data.red_s||0) : (n.data.blue_s||0);
-  if (n.data.owner === team && !n.stale){
+  // Only tick when the GAME is running (fixes timers running while stopped).
+  if (game.running && n.data.owner === team && !n.stale){
     return base + (Date.now() - n.arrival)/1000;
   }
   return base;
@@ -257,6 +321,14 @@ function sendCmd(body){
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(body)
   }).catch(err => alert('Command failed: ' + err));
+}
+function renderGame(){
+  clockEl.textContent = fmt(game.remaining_s);
+  clockEl.className = !game.running && game.remaining_s === 0 ? 'over'
+        : (!game.running ? 'idle' : (game.remaining_s <= 10 ? 'low' : ''));
+  startStop.textContent = game.running ? 'Stop' : 'Start';
+  startStop.classList.toggle('go', !game.running);
+  startStop.classList.toggle('danger', game.running);
 }
 function ensureTile(key){
   let el = document.getElementById('tile-'+key);
@@ -278,7 +350,7 @@ function render(){
   const now = Date.now();
   for (const key in nodes){
     const n = nodes[key];
-    n.stale = (n.data.status === 'offline') || (now - n.arrival > 30000);
+    n.stale = (n.data.status === 'offline') || (now - n.lastMsg > 30000);
     const el = ensureTile(key);
     el.dataset.type = n.data.type; el.dataset.id = n.data.id;
     el.classList.toggle('offline', n.stale);
@@ -294,44 +366,43 @@ function render(){
         ? ('held by ' + n.data.owner) : (n.stale ? 'offline' : 'neutral');
   }
 }
-// Per-node reset (event delegation).
+// Controls.
 grid.addEventListener('click', (e) => {
   if (!e.target.classList.contains('reset')) return;
   const tile = e.target.closest('.tile');
   const id = tile.dataset.id, type = tile.dataset.type;
-  if (confirm('Reset ' + id.toUpperCase() + ' to neutral and zero its timers?')) {
-    sendCmd({scope:'node', type, id, action:'reset'});
-  }
+  if (confirm('Reset ' + id.toUpperCase() + ' to neutral and zero its timers?'))
+    sendCmd({scope:'node', type, id});
 });
-// Reset all.
 document.getElementById('resetAll').onclick = () => {
-  if (confirm('Reset ALL control points to neutral and zero every timer?')) {
-    sendCmd({scope:'all', action:'reset'});
+  if (confirm('Reset ALL control points to neutral and zero every timer?'))
+    sendCmd({scope:'all'});
+};
+startStop.onclick = () => {
+  if (game.running) {
+    sendCmd({scope:'game', action:'stop'});
+  } else if (confirm('Start a new ' + minutesEl.value + '-minute round? (zeros all timers)')) {
+    sendCmd({scope:'game', action:'start', minutes: minutesEl.value});
   }
 };
-// Start / Stop the round (global). Button shows the action it will take.
-let gameRunning = true;
-const startStop = document.getElementById('startStop');
-function renderGameBtn(){
-  startStop.textContent = gameRunning ? 'Stop' : 'Start';
-  startStop.classList.toggle('danger', gameRunning);
-}
-startStop.onclick = () => sendCmd({scope:'game', action: gameRunning ? 'stop' : 'start'});
+minutesEl.onchange = () => sendCmd({scope:'game', action:'settime', minutes: minutesEl.value});
 
 const es = new EventSource('/events');
 es.onopen = () => statusEl.textContent = 'live';
 es.onerror = () => statusEl.textContent = 'reconnecting…';
 es.onmessage = (e) => {
   const d = JSON.parse(e.data);
-  if (d.kind === 'game') { gameRunning = d.running; renderGameBtn(); return; }
+  if (d.kind === 'game') { game = d; renderGame(); return; }
   const key = d.type + '/' + d.id;
   const prev = nodes[key];
   const changed = !prev || prev.data.owner !== d.owner
       || prev.data.red_s !== d.red_s || prev.data.blue_s !== d.blue_s;
-  nodes[key] = { data: d, arrival: changed ? Date.now() : prev.arrival };
+  nodes[key] = { data: d, lastMsg: Date.now(),
+                 arrival: changed ? Date.now() : prev.arrival };
   render();
 };
 setInterval(render, 1000);
+renderGame();
 </script>
 </body>
 </html>"""
@@ -339,5 +410,6 @@ setInterval(render, 1000);
 
 if __name__ == "__main__":
     threading.Thread(target=_mqtt_loop, daemon=True).start()
+    threading.Thread(target=_clock_loop, daemon=True).start()
     print(f"[dash] serving on http://0.0.0.0:{HTTP_PORT}")
     app.run(host="0.0.0.0", port=HTTP_PORT, threaded=True)

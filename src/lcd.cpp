@@ -79,7 +79,7 @@ void lcdSetup() {
 void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
                  uint32_t blueMs, bool capturing, Team capturingTeam,
                  uint32_t captureElapsedMs, bool connected, const String &ip,
-                 bool running) {
+                 bool running, int32_t remainingS) {
   if ((millis() - g_lastDraw) < LCD_REFRESH_MS) return;
   g_lastDraw = millis();
 
@@ -115,21 +115,40 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
     g_lastBlueT = bt;
   }
 
-  // Status strip: node name + IP, or a yellow "PAUSED" when stopped (left);
-  // version (right). The running flag is folded into the string so it repaints.
+  // Status strip (two lines): name | game countdown | version  on line 1;
+  // IP, or a yellow PAUSED / red TIME! indicator, on line 2.
   String name = nodeName;
   name.toUpperCase();
-  String status = running ? (name + "  " + (connected ? ip : String("no wifi")))
-                          : (name + "  ** PAUSED **");
-  if (status != g_lastStatus) {
+  char cdBuf[8];
+  if (remainingS < 0) {
+    strncpy(cdBuf, "--:--", sizeof(cdBuf));
+  } else {
+    snprintf(cdBuf, sizeof(cdBuf), "%ld:%02ld", (long)(remainingS / 60),
+             (long)(remainingS % 60));
+  }
+  const bool over = (!running && remainingS == 0);
+  String line2 = running ? (connected ? ip : String("no wifi"))
+                         : (over ? String("** TIME! **") : String("** PAUSED **"));
+  String key = name + "|" + cdBuf + "|" + line2;
+  if (key != g_lastStatus) {
     tft.fillRect(0, STATUS_Y, W, 40, TFT_BLACK);
-    tft.setTextColor(running ? TFT_WHITE : TFT_YELLOW, TFT_BLACK);
-    tft.setTextDatum(TL_DATUM);
-    tft.drawString(status, 6, STATUS_Y + 4, 2);
+    // Line 1.
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextDatum(TL_DATUM);
+    tft.drawString(name, 6, STATUS_Y + 2, 2);
     tft.setTextDatum(TR_DATUM);
-    tft.drawString("v" + String(FIRMWARE_VERSION), W - 6, STATUS_Y + 4, 2);
-    g_lastStatus = status;
+    tft.drawString("v" + String(FIRMWARE_VERSION), W - 6, STATUS_Y + 2, 2);
+    uint16_t cdCol = over ? TFT_RED
+                          : (!running ? TFT_YELLOW
+                                      : (remainingS >= 0 && remainingS <= 10 ? TFT_RED : TFT_WHITE));
+    tft.setTextColor(cdCol, TFT_BLACK);
+    tft.setTextDatum(TC_DATUM);
+    tft.drawString(cdBuf, W / 2, STATUS_Y + 2, 2);
+    // Line 2.
+    tft.setTextColor(running ? TFT_DARKGREY : (over ? TFT_RED : TFT_YELLOW), TFT_BLACK);
+    tft.setTextDatum(TL_DATUM);
+    tft.drawString(line2, 6, STATUS_Y + 22, 1);
+    g_lastStatus = key;
     g_lastBarPct = -1;  // force bar repaint
   }
 
@@ -139,7 +158,7 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
   const int pct = (int)pctU;
   if (pct != g_lastBarPct) {
     g_lastBarPct = pct;
-    const int y = STATUS_Y + 26, h = 10, bw = W - 12;
+    const int y = STATUS_Y + 33, h = 5, bw = W - 12;
     tft.fillRect(6, y, bw, h, TFT_BLACK);
     if (pct > 0) {
       tft.drawRect(6, y, bw, h, TFT_WHITE);

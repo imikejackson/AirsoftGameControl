@@ -33,6 +33,13 @@ uint32_t gameCaptureElapsedMs();
 bool gameRunning();
 void gameSetRunning(bool running);
 
+// Game countdown clock, driven by the server via airsoft/game/state. The node
+// displays the remaining time and freezes itself if it reaches zero (a local
+// fallback so the round still ends if the server becomes unreachable).
+void     gameSetCountdown(uint32_t remainingMs);
+bool     gameHasClock();
+uint32_t gameRemainingMs();
+
 // Returns true exactly once after each game-state change (capture, reset, or
 // running toggle), so the caller can publish on the edge. Consuming clears it.
 bool gameConsumeStateChanged();

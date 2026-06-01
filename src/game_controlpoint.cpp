@@ -18,6 +18,11 @@ unsigned long g_captureStart  = 0;
 bool          g_stateChanged  = false;     // owner/timers/running changed -> republish
 bool          g_running       = true;      // round active? paused freezes everything
 
+// Game countdown clock (server-driven via airsoft/game/state).
+bool          g_hasClock        = false;
+uint32_t      g_setRemainingMs  = 0;       // remaining as of the last clock update
+unsigned long g_clockReceiptMs  = 0;       // millis() of that update
+
 #ifdef PIN_BTN_RESET
 bool          g_resetStable   = false;
 bool          g_resetReading  = false;
@@ -76,7 +81,15 @@ void gameLoop() {
   }
 #endif
 
-  // Paused: freeze the game — no captures, no accrual (reset button still works).
+  // Local game-over fallback: if the countdown has run out, freeze. The server
+  // normally ends the round, but this keeps it correct if the server drops.
+  if (g_running && g_hasClock &&
+      (uint32_t)(now - g_clockReceiptMs) >= g_setRemainingMs) {
+    Serial.println("[game] countdown reached 0 -> game over");
+    gameSetRunning(false);
+  }
+
+  // Paused / over: freeze the game — no captures, no accrual (reset still works).
   if (!g_running) {
     g_capturing = TEAM_NONE;
     return;
@@ -108,6 +121,21 @@ uint32_t gameCumulativeMs(Team team) {
 }
 
 bool gameRunning() { return g_running; }
+
+void gameSetCountdown(uint32_t remainingMs) {
+  g_setRemainingMs = remainingMs;
+  g_clockReceiptMs = millis();
+  g_hasClock = true;
+}
+
+bool gameHasClock() { return g_hasClock; }
+
+uint32_t gameRemainingMs() {
+  if (!g_hasClock) return 0;
+  if (!g_running) return g_setRemainingMs;  // frozen while paused / over
+  const uint32_t elapsed = (uint32_t)(millis() - g_clockReceiptMs);
+  return (elapsed < g_setRemainingMs) ? (g_setRemainingMs - elapsed) : 0;
+}
 
 void gameSetRunning(bool running) {
   if (running == g_running) return;
