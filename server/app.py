@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Airsoft Control Point — live web dashboard.
+"""Airsoft Control Point — live web dashboard + game controls.
 
 Subscribes to the MQTT broker, keeps live node state in memory, and serves a
-self-updating scoreboard over Server-Sent Events. Single file: Flask +
-paho-mqtt with all HTML/JS embedded. Nodes are auto-discovered — a tile appears
-as soon as a node publishes.
+self-updating scoreboard over Server-Sent Events. Also publishes game commands
+(reset all / reset one node) back to the broker. Single file: Flask +
+paho-mqtt with all HTML/JS embedded. Nodes are auto-discovered.
 
 The firmware publishes game state on ownership change (plus heartbeats for
 liveness), so the browser extrapolates the owning team's ticking time between
@@ -15,7 +15,7 @@ import queue
 import threading
 import time
 
-from flask import Flask, Response, render_template_string
+from flask import Flask, Response, request, jsonify, render_template_string
 import paho.mqtt.client as mqtt
 
 MQTT_HOST = "localhost"
@@ -29,6 +29,7 @@ _nodes = {}                 # "type/id" -> node dict
 _nodes_lock = threading.Lock()
 _subs = []                  # list[queue.Queue] for SSE clients
 _subs_lock = threading.Lock()
+_client = None              # the paho client, for publishing commands
 
 
 def _broadcast(node):
@@ -76,7 +77,6 @@ def _on_message(client, userdata, msg):
             for f in ("owner", "red_s", "blue_s", "ip", "rssi"):
                 if f in d:
                     n[f] = d[f]
-            # A state message carrying game fields re-baselines the timers.
             if kind == "state" and ("owner" in d or "red_s" in d):
                 n["updated"] = time.time()
             if kind == "heartbeat":
@@ -86,12 +86,14 @@ def _on_message(client, userdata, msg):
 
 
 def _mqtt_loop():
+    global _client
     try:
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)  # paho 2.x
     except (AttributeError, TypeError):
         client = mqtt.Client()                                  # paho 1.x
     client.on_connect = _on_connect
     client.on_message = _on_message
+    _client = client
     while True:
         try:
             client.connect(MQTT_HOST, MQTT_PORT, 60)
@@ -128,6 +130,33 @@ def events():
     return Response(stream(), mimetype="text/event-stream")
 
 
+@app.route("/api/command", methods=["POST"])
+def command():
+    """Publish a game command. Body: {scope:"all"} or {scope:"node",type,id};
+    optional action (default "reset"). Commands are NEVER retained."""
+    if _client is None:
+        return jsonify(ok=False, error="broker not connected"), 503
+    body = request.get_json(force=True, silent=True) or {}
+    action = body.get("action", "reset")
+    scope = body.get("scope")
+
+    if scope == "all":
+        topic = "airsoft/game/command"
+        payload = "reset_all" if action == "reset" else action
+    elif scope == "node":
+        ntype, nid = body.get("type"), body.get("id")
+        if not ntype or not nid:
+            return jsonify(ok=False, error="missing type/id"), 400
+        topic = f"airsoft/{ntype}/{nid}/command"
+        payload = action
+    else:
+        return jsonify(ok=False, error="bad scope"), 400
+
+    _client.publish(topic, payload, qos=1, retain=False)
+    print(f"[dash] command -> {topic} = {payload}")
+    return jsonify(ok=True, topic=topic, payload=payload)
+
+
 INDEX_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -139,10 +168,17 @@ INDEX_HTML = r"""<!doctype html>
   * { box-sizing: border-box; }
   body { margin:0; font-family: system-ui, sans-serif; background:#0d0f12; color:#e8e8e8; }
   header { padding:14px 18px; background:#15181d; border-bottom:1px solid #262b33;
-           display:flex; align-items:center; gap:12px; }
+           display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
   header h1 { font-size:18px; margin:0; font-weight:600; letter-spacing:.04em; }
   header .sub { color:#7d8794; font-size:13px; }
-  #status { margin-left:auto; font-size:13px; color:#7d8794; }
+  #status { font-size:13px; color:#7d8794; }
+  .spacer { margin-left:auto; }
+  button.btn { font:inherit; font-size:13px; font-weight:600; color:#e8e8e8;
+        background:#2a2f37; border:1px solid #3a414c; border-radius:8px;
+        padding:7px 12px; cursor:pointer; }
+  button.btn:hover { background:#343a44; }
+  button.btn.danger { background:#7a1d24; border-color:#a32a33; }
+  button.btn.danger:hover { background:#94242c; }
   #grid { display:grid; gap:14px; padding:18px;
           grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
   .tile { background:#171a1f; border:1px solid #262b33; border-radius:12px;
@@ -163,8 +199,11 @@ INDEX_HTML = r"""<!doctype html>
   .row.blue { background:#121a2e; }  .row.blue.own { background:#1f4fd0; }
   .row.own .t { color:#fff; }
   .foot { padding:8px 14px; font-size:12px; color:#7d8794; display:flex;
-          justify-content:space-between; border-top:1px solid #262b33; min-height:30px; }
-  .cap { color:#ffcf5c; font-weight:600; }
+          align-items:center; justify-content:space-between; border-top:1px solid #262b33; }
+  .foot .cap { color:#ffcf5c; font-weight:600; }
+  button.reset { font:inherit; font-size:11px; color:#cdd3da; background:transparent;
+        border:1px solid #3a414c; border-radius:6px; padding:3px 8px; cursor:pointer; }
+  button.reset:hover { background:#2a2f37; }
   .empty { color:#7d8794; padding:40px; text-align:center; }
 </style>
 </head>
@@ -172,7 +211,9 @@ INDEX_HTML = r"""<!doctype html>
 <header>
   <h1>AIRSOFT CONTROL POINTS</h1>
   <span class="sub">live scoreboard</span>
+  <span class="spacer"></span>
   <span id="status">connecting…</span>
+  <button class="btn danger" id="resetAll">Reset All</button>
 </header>
 <div id="grid"><div class="empty">Waiting for nodes to report…</div></div>
 
@@ -188,11 +229,16 @@ function fmt(sec){
 }
 function liveSecs(n, team){
   const base = team === 'red' ? (n.data.red_s||0) : (n.data.blue_s||0);
-  // The owning team's timer ticks since we last got a state update.
   if (n.data.owner === team && !n.stale){
     return base + (Date.now() - n.arrival)/1000;
   }
   return base;
+}
+function sendCmd(body){
+  return fetch('/api/command', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body)
+  }).catch(err => alert('Command failed: ' + err));
 }
 function ensureTile(key){
   let el = document.getElementById('tile-'+key);
@@ -206,7 +252,7 @@ function ensureTile(key){
     </div>
     <div class="row red"><span class="lbl">RED</span><span class="t rt">0:00</span></div>
     <div class="row blue"><span class="lbl">BLUE</span><span class="t bt">0:00</span></div>
-    <div class="foot"><span class="ip"></span><span class="cap"></span></div>`;
+    <div class="foot"><span class="cap"></span><button class="reset">Reset</button></div>`;
   grid.appendChild(el);
   return el;
 }
@@ -216,22 +262,35 @@ function render(){
     const n = nodes[key];
     n.stale = (n.data.status === 'offline') || (now - n.arrival > 30000);
     const el = ensureTile(key);
+    el.dataset.type = n.data.type; el.dataset.id = n.data.id;
     el.classList.toggle('offline', n.stale);
     el.querySelector('.name').textContent = (n.data.id||'?').toUpperCase();
     el.querySelector('.type').textContent = n.data.type||'';
-    const dot = el.querySelector('.dot');
-    dot.className = 'dot ' + (n.stale ? 'off' : 'on');
+    el.querySelector('.dot').className = 'dot ' + (n.stale ? 'off' : 'on');
     const rRow = el.querySelector('.row.red'), bRow = el.querySelector('.row.blue');
     rRow.classList.toggle('own', n.data.owner === 'red' && !n.stale);
     bRow.classList.toggle('own', n.data.owner === 'blue' && !n.stale);
     el.querySelector('.rt').textContent = fmt(liveSecs(n,'red'));
     el.querySelector('.bt').textContent = fmt(liveSecs(n,'blue'));
-    el.querySelector('.ip').textContent = n.data.ip || '';
-    const cap = el.querySelector('.cap');
-    cap.textContent = (!n.stale && n.data.owner && n.data.owner!=='none')
+    el.querySelector('.cap').textContent = (!n.stale && n.data.owner && n.data.owner!=='none')
         ? ('held by ' + n.data.owner) : (n.stale ? 'offline' : 'neutral');
   }
 }
+// Per-node reset (event delegation).
+grid.addEventListener('click', (e) => {
+  if (!e.target.classList.contains('reset')) return;
+  const tile = e.target.closest('.tile');
+  const id = tile.dataset.id, type = tile.dataset.type;
+  if (confirm('Reset ' + id.toUpperCase() + ' to neutral and zero its timers?')) {
+    sendCmd({scope:'node', type, id, action:'reset'});
+  }
+});
+// Reset all.
+document.getElementById('resetAll').onclick = () => {
+  if (confirm('Reset ALL control points to neutral and zero every timer?')) {
+    sendCmd({scope:'all', action:'reset'});
+  }
+};
 const es = new EventSource('/events');
 es.onopen = () => statusEl.textContent = 'live';
 es.onerror = () => statusEl.textContent = 'reconnecting…';
@@ -239,7 +298,6 @@ es.onmessage = (e) => {
   const d = JSON.parse(e.data);
   const key = d.type + '/' + d.id;
   const prev = nodes[key];
-  // Re-baseline the tick clock only when the timers/owner actually changed.
   const changed = !prev || prev.data.owner !== d.owner
       || prev.data.red_s !== d.red_s || prev.data.blue_s !== d.blue_s;
   nodes[key] = { data: d, arrival: changed ? Date.now() : prev.arrival };
