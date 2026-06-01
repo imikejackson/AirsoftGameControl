@@ -364,7 +364,7 @@ function renderResults(){
     if (d.owner === 'red') redN++; else if (d.owner === 'blue') blueN++;
   }
   const q = s => resultsEl.querySelector(s);
-  resultsEl.style.display = '';
+  resultsEl.style.display = 'block';
   q('.rtitle').textContent = (game.remaining_s === 0) ? 'GAME OVER — TIME!' : 'GAME STOPPED';
   q('.rred').textContent = fmt(redT);  q('.rblue').textContent = fmt(blueT);
   q('.rredn').textContent = redN;      q('.rbluen').textContent = blueN;
