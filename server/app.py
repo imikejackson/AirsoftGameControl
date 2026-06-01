@@ -17,6 +17,7 @@ import time
 from flask import Flask, Response, request, jsonify, render_template_string
 import paho.mqtt.client as mqtt
 
+DASH_VERSION = 1            # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -151,7 +152,9 @@ def _clock_loop():
 
 @app.route("/")
 def index():
-    return render_template_string(INDEX_HTML)
+    resp = Response(render_template_string(INDEX_HTML, ver=DASH_VERSION))
+    resp.headers["Cache-Control"] = "no-store"  # always serve the latest page
+    return resp
 
 
 @app.route("/events")
@@ -238,6 +241,7 @@ INDEX_HTML = r"""<!doctype html>
            display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
   header h1 { font-size:18px; margin:0; font-weight:600; letter-spacing:.04em; }
   #status { font-size:13px; color:#7d8794; }
+  .ver { font-size:11px; color:#7d8794; letter-spacing:.05em; }
   .spacer { margin-left:auto; }
   #clock { font-size:34px; font-weight:800; font-variant-numeric: tabular-nums;
            letter-spacing:.02em; }
@@ -296,6 +300,7 @@ INDEX_HTML = r"""<!doctype html>
 <body>
 <header>
   <h1>AIRSOFT</h1>
+  <span class="ver">dash v{{ ver }}</span>
   <span id="status">connecting…</span>
   <span class="spacer"></span>
   <span id="clock" class="idle">--:--</span>
