@@ -78,7 +78,8 @@ void lcdSetup() {
 
 void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
                  uint32_t blueMs, bool capturing, Team capturingTeam,
-                 uint32_t captureElapsedMs, bool connected, const String &ip) {
+                 uint32_t captureElapsedMs, bool connected, const String &ip,
+                 bool running) {
   if ((millis() - g_lastDraw) < LCD_REFRESH_MS) return;
   g_lastDraw = millis();
 
@@ -114,15 +115,18 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
     g_lastBlueT = bt;
   }
 
-  // Status strip: node name + IP (left), version (right).
+  // Status strip: node name + IP, or a yellow "PAUSED" when stopped (left);
+  // version (right). The running flag is folded into the string so it repaints.
   String name = nodeName;
   name.toUpperCase();
-  String status = name + "  " + (connected ? ip : String("no wifi"));
+  String status = running ? (name + "  " + (connected ? ip : String("no wifi")))
+                          : (name + "  ** PAUSED **");
   if (status != g_lastStatus) {
     tft.fillRect(0, STATUS_Y, W, 40, TFT_BLACK);
-    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextColor(running ? TFT_WHITE : TFT_YELLOW, TFT_BLACK);
     tft.setTextDatum(TL_DATUM);
     tft.drawString(status, 6, STATUS_Y + 4, 2);
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.setTextDatum(TR_DATUM);
     tft.drawString("v" + String(FIRMWARE_VERSION), W - 6, STATUS_Y + 4, 2);
     g_lastStatus = status;

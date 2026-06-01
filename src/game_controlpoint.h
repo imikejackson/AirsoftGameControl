@@ -27,9 +27,15 @@ bool     gameCaptureInProgress();
 Team     gameCapturingTeam();
 uint32_t gameCaptureElapsedMs();
 
-// Returns true exactly once after each ownership change (capture or reset), so
-// the caller can publish/redraw on the edge. Consuming clears the flag.
-bool gameConsumeOwnershipChanged();
+// Round running state. Default true (a standalone node just runs). When paused,
+// timers freeze and captures are disabled; resuming doesn't count the paused
+// gap. Driven by the retained airsoft/game/state and start/stop commands.
+bool gameRunning();
+void gameSetRunning(bool running);
+
+// Returns true exactly once after each game-state change (capture, reset, or
+// running toggle), so the caller can publish on the edge. Consuming clears it.
+bool gameConsumeStateChanged();
 
 // Zero all timers and return to neutral. Triggered by the reset button (if
 // wired), an MQTT command, or the Serial "reset" command.

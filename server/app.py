@@ -30,6 +30,7 @@ _nodes_lock = threading.Lock()
 _subs = []                  # list[queue.Queue] for SSE clients
 _subs_lock = threading.Lock()
 _client = None              # the paho client, for publishing commands
+_game_running = True        # authoritative run state (from airsoft/game/state)
 
 
 def _broadcast(node):
@@ -59,11 +60,19 @@ def _on_connect(client, userdata, flags, rc, *args):
 
 
 def _on_message(client, userdata, msg):
+    payload = msg.payload.decode("utf-8", "ignore").strip()
+
+    # Authoritative game run state (retained), e.g. {"running": true}.
+    if msg.topic == "airsoft/game/state":
+        global _game_running
+        _game_running = "true" in payload.lower()
+        _broadcast({"kind": "game", "running": _game_running})
+        return
+
     parts = msg.topic.split("/")
     if len(parts) < 4 or parts[0] != "airsoft" or parts[1] == "game":
         return
     ntype, nid, kind = parts[1], parts[2], parts[3]
-    payload = msg.payload.decode("utf-8", "ignore").strip()
 
     with _nodes_lock:
         n = _touch(ntype, nid)
@@ -115,6 +124,7 @@ def events():
         with _subs_lock:
             _subs.append(q)
         try:
+            yield f"data: {json.dumps({'kind': 'game', 'running': _game_running})}\n\n"
             with _nodes_lock:
                 snap = [dict(n) for n in _nodes.values()]
             for n in snap:
@@ -140,7 +150,14 @@ def command():
     action = body.get("action", "reset")
     scope = body.get("scope")
 
-    if scope == "all":
+    if scope == "game":
+        # Start/Stop sets the retained, authoritative run state.
+        running = (action == "start")
+        _client.publish("airsoft/game/state",
+                        json.dumps({"running": running}), qos=1, retain=True)
+        print(f"[dash] game/state -> running={running}")
+        return jsonify(ok=True, running=running)
+    elif scope == "all":
         topic = "airsoft/game/command"
         payload = "reset_all" if action == "reset" else action
     elif scope == "node":
@@ -213,6 +230,7 @@ INDEX_HTML = r"""<!doctype html>
   <span class="sub">live scoreboard</span>
   <span class="spacer"></span>
   <span id="status">connecting…</span>
+  <button class="btn" id="startStop">Stop</button>
   <button class="btn danger" id="resetAll">Reset All</button>
 </header>
 <div id="grid"><div class="empty">Waiting for nodes to report…</div></div>
@@ -291,11 +309,21 @@ document.getElementById('resetAll').onclick = () => {
     sendCmd({scope:'all', action:'reset'});
   }
 };
+// Start / Stop the round (global). Button shows the action it will take.
+let gameRunning = true;
+const startStop = document.getElementById('startStop');
+function renderGameBtn(){
+  startStop.textContent = gameRunning ? 'Stop' : 'Start';
+  startStop.classList.toggle('danger', gameRunning);
+}
+startStop.onclick = () => sendCmd({scope:'game', action: gameRunning ? 'stop' : 'start'});
+
 const es = new EventSource('/events');
 es.onopen = () => statusEl.textContent = 'live';
 es.onerror = () => statusEl.textContent = 'reconnecting…';
 es.onmessage = (e) => {
   const d = JSON.parse(e.data);
+  if (d.kind === 'game') { gameRunning = d.running; renderGameBtn(); return; }
   const key = d.type + '/' + d.id;
   const prev = nodes[key];
   const changed = !prev || prev.data.owner !== d.owner

@@ -25,15 +25,22 @@ static void publishGameState() {
   String payload = String("{\"owner\":\"") + teamName(gameOwner()) +
                    "\",\"red_s\":" + String(gameCumulativeMs(TEAM_RED) / 1000) +
                    ",\"blue_s\":" + String(gameCumulativeMs(TEAM_BLUE) / 1000) +
-                   "}";
+                   ",\"running\":" + (gameRunning() ? "true" : "false") + "}";
   mqttPublishState(payload);
 }
 
-// Handle an inbound MQTT command. Any payload containing "reset" zeroes the
-// game (covers both this node's command topic and airsoft/game/command).
+// Handle an inbound MQTT command. The retained airsoft/game/state carries the
+// authoritative run state ({"running":true/false}); the command topics (this
+// node's, or airsoft/game/command) carry actions: reset / start / stop.
 static void onMqttCommand(const String &topic, const String &payload) {
   Serial.printf("[cmd] %s -> %s\n", topic.c_str(), payload.c_str());
+  if (topic == "airsoft/game/state") {
+    gameSetRunning(payload.indexOf("true") >= 0);
+    return;
+  }
   if (payload.indexOf("reset") >= 0) gameReset();
+  else if (payload.indexOf("start") >= 0) gameSetRunning(true);
+  else if (payload.indexOf("stop") >= 0) gameSetRunning(false);
 }
 
 // Single owner of the Serial reader: read one line and dispatch it to each
@@ -114,9 +121,8 @@ void loop() {
   buttonsLoop();   // debounce + button edge events
   gameLoop();      // capture countdown, ownership transfer, cumulative timers
 
-  // On an ownership change (capture or reset), report it over MQTT.
-  const bool ownerChanged = gameConsumeOwnershipChanged();
-  if (ownerChanged) publishGameState();
+  // On a game-state change (capture, reset, or start/stop), report over MQTT.
+  if (gameConsumeStateChanged()) publishGameState();
 
   updateStatusLed();  // onboard RGB reflects ownership/capture
 
@@ -128,7 +134,7 @@ void loop() {
   lcdShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
               gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
               gameCapturingTeam(), gameCaptureElapsedMs(), wifiConnected(),
-              wifiIpString());
+              wifiIpString(), gameRunning());
 
   // Lightweight heartbeat to Serial so we can confirm the loop is alive and
   // watch connection state without blocking. Non-blocking millis() timer.

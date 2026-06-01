@@ -17,4 +17,5 @@ void lcdSetup();
 // LCD_REFRESH_MS and only repaints fields whose values changed (no flicker).
 void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
                  uint32_t blueMs, bool capturing, Team capturingTeam,
-                 uint32_t captureElapsedMs, bool connected, const String &ip);
+                 uint32_t captureElapsedMs, bool connected, const String &ip,
+                 bool running);
