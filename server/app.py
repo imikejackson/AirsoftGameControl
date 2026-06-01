@@ -17,7 +17,7 @@ import time
 from flask import Flask, Response, request, jsonify, render_template_string
 import paho.mqtt.client as mqtt
 
-DASH_VERSION = 1            # bump on every dashboard change; shown in the header
+DASH_VERSION = 2            # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -287,12 +287,15 @@ INDEX_HTML = r"""<!doctype html>
   #results { display:none; margin:14px 18px 0; padding:16px 20px; border-radius:12px;
         background:#15181d; border:1px solid #3a414c; }
   #results .rtitle { font-size:13px; letter-spacing:.22em; font-weight:800; color:#ffcf5c; }
-  #results .rstats { display:flex; gap:36px; flex-wrap:wrap; margin-top:12px; }
-  #results .rlbl { font-size:11px; color:#7d8794; letter-spacing:.12em; }
-  #results .rval { font-size:26px; font-weight:800; font-variant-numeric:tabular-nums; margin-top:2px; }
-  #results .rred { color:#ff6b6b; } #results .rblue { color:#6b9bff; }
-  #results .rsep { color:#7d8794; font-size:17px; padding:0 6px; }
-  #results .lead { text-decoration:underline; text-underline-offset:4px; }
+  #results .rtable { border-collapse:collapse; margin-top:12px; }
+  #results .rtable th, #results .rtable td { padding:8px 28px 8px 0; text-align:left;
+        border-bottom:1px solid #262b33; white-space:nowrap; }
+  #results .rtable th { font-size:11px; color:#7d8794; letter-spacing:.1em;
+        text-transform:uppercase; font-weight:600; }
+  #results .rtable td { font-size:24px; font-weight:800; font-variant-numeric:tabular-nums; }
+  #results .rtable td.tm { font-size:16px; letter-spacing:.06em; }
+  #results .r-red td { color:#ff6b6b; } #results .r-blue td { color:#6b9bff; }
+  #results .rtable td.lead { text-decoration:underline; text-underline-offset:4px; }
   #results .rwin { margin-top:12px; font-size:22px; font-weight:800; letter-spacing:.04em; }
   #results .rwin .ww-red { color:#ff6b6b; } #results .rwin .ww-blue { color:#6b9bff; }
 </style>
@@ -310,12 +313,13 @@ INDEX_HTML = r"""<!doctype html>
 </header>
 <div id="results">
   <div class="rtitle"></div>
-  <div class="rstats">
-    <div><div class="rlbl">TOTAL HELD TIME</div>
-      <div class="rval"><span class="rred"></span><span class="rsep">vs</span><span class="rblue"></span></div></div>
-    <div><div class="rlbl">NODES HELD AT END</div>
-      <div class="rval"><span class="rredn"></span><span class="rsep">vs</span><span class="rbluen"></span></div></div>
-  </div>
+  <table class="rtable">
+    <thead><tr><th>Team</th><th>Total Held Time</th><th>Total Nodes Held</th></tr></thead>
+    <tbody>
+      <tr class="r-red"><td class="tm">RED</td><td class="tt"></td><td class="nn"></td></tr>
+      <tr class="r-blue"><td class="tm">BLUE</td><td class="tt"></td><td class="nn"></td></tr>
+    </tbody>
+  </table>
   <div class="rwin"></div>
 </div>
 <div id="grid"><div class="empty">Waiting for nodes to report…</div></div>
@@ -371,12 +375,12 @@ function renderResults(){
   const q = s => resultsEl.querySelector(s);
   resultsEl.style.display = 'block';
   q('.rtitle').textContent = (game.remaining_s === 0) ? 'GAME OVER — TIME!' : 'GAME STOPPED';
-  q('.rred').textContent = fmt(redT);  q('.rblue').textContent = fmt(blueT);
-  q('.rredn').textContent = redN;      q('.rbluen').textContent = blueN;
-  q('.rred').classList.toggle('lead', redT > blueT);
-  q('.rblue').classList.toggle('lead', blueT > redT);
-  q('.rredn').classList.toggle('lead', redN > blueN);
-  q('.rbluen').classList.toggle('lead', blueN > redN);
+  q('.r-red .tt').textContent = fmt(redT);   q('.r-red .nn').textContent = redN;
+  q('.r-blue .tt').textContent = fmt(blueT); q('.r-blue .nn').textContent = blueN;
+  q('.r-red .tt').classList.toggle('lead', redT > blueT);
+  q('.r-blue .tt').classList.toggle('lead', blueT > redT);
+  q('.r-red .nn').classList.toggle('lead', redN > blueN);
+  q('.r-blue .nn').classList.toggle('lead', blueN > redN);
   const win = redT > blueT ? ['RED','ww-red'] : blueT > redT ? ['BLUE','ww-blue'] : null;
   q('.rwin').innerHTML = win
       ? ('WINNER (held time): <span class="'+win[1]+'">'+win[0]+'</span>')
