@@ -46,6 +46,40 @@ journalctl -u airsoft-dashboard -f           # live logs
 sudo systemctl restart airsoft-dashboard     # restart
 ```
 
+## Audio / voice packs
+
+The dashboard speaks game events. Tap **Audio** in the header once (browser rule:
+audio needs a user gesture) — that device then announces; others stay silent.
+Plug the device into a powered speaker for field volume.
+
+By default it uses the **browser's built-in voice (TTS)**. For nicer deployment
+audio, drop **voice packs** of pre-rendered clips on the Pi and pick one from the
+header dropdown. A pack is a folder of `.mp3` files:
+
+```text
+~/airsoft-dashboard/sounds/<pack-name>/      e.g. sounds/military_us_male/
+```
+
+Copy a pack over with scp, then refresh the page (it appears in the dropdown):
+
+```powershell
+scp -r military_us_male <user>@192.168.88.129:~/airsoft-dashboard/sounds/
+```
+
+**Any missing clip falls back to TTS**, so packs can be partial and filled in
+over time. Clip filenames the dashboard looks for:
+
+| File | Spoken as |
+|------|-----------|
+| `start.mp3` | "Game on." |
+| `one_minute.mp3` | "One minute remaining." |
+| `over_red.mp3` / `over_blue.mp3` / `over_tie.mp3` | "Time! Red/Blue wins." / "…tie." |
+| `cap_<node>_<team>.mp3` | "Alpha taken by Red." — one per node × team |
+| `audio_enabled.mp3` | "Audio enabled." (played when you tap Audio) |
+
+`<node>` is the lowercase node id (alpha, bravo, …); `<team>` is `red` or `blue`.
+The periodic state summary stays on TTS (too many phrasings to pre-render).
+
 ## Requirements
 
 - Mosquitto running on the Pi with a listener on `:1883` (set up earlier).

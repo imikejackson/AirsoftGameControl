@@ -10,14 +10,18 @@ paho-mqtt with all HTML/JS embedded. Nodes are auto-discovered.
 Open http://<pi>:8080  (e.g. http://airsoft-pi.local:8080).
 """
 import json
+import os
 import queue
 import threading
 import time
 
-from flask import Flask, Response, request, jsonify, render_template_string
+from flask import (Flask, Response, request, jsonify, abort,
+                   send_from_directory, render_template_string)
 import paho.mqtt.client as mqtt
 
-DASH_VERSION = 3            # bump on every dashboard change; shown in the header
+SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
+
+DASH_VERSION = 4            # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -180,6 +184,27 @@ def events():
     return Response(stream(), mimetype="text/event-stream")
 
 
+@app.route("/api/packs")
+def packs():
+    """List voice packs (subdirs of sounds/) and the .mp3 clips in each."""
+    out = {}
+    try:
+        for name in sorted(os.listdir(SOUNDS_DIR)):
+            d = os.path.join(SOUNDS_DIR, name)
+            if os.path.isdir(d):
+                out[name] = sorted(f for f in os.listdir(d) if f.lower().endswith(".mp3"))
+    except FileNotFoundError:
+        pass
+    return jsonify(out)
+
+
+@app.route("/sounds/<pack>/<path:fname>")
+def sound(pack, fname):
+    if "/" in pack or pack.startswith("."):
+        abort(404)
+    return send_from_directory(os.path.join(SOUNDS_DIR, pack), fname)
+
+
 @app.route("/api/command", methods=["POST"])
 def command():
     if _client is None:
@@ -250,6 +275,8 @@ INDEX_HTML = r"""<!doctype html>
   .ctl { display:flex; align-items:center; gap:8px; }
   input#minutes { width:56px; font:inherit; font-size:14px; text-align:center;
         background:#0d0f12; color:#e8e8e8; border:1px solid #3a414c; border-radius:6px; padding:5px; }
+  select.sel { font:inherit; font-size:13px; background:#0d0f12; color:#e8e8e8;
+        border:1px solid #3a414c; border-radius:8px; padding:6px 8px; }
   button.btn { font:inherit; font-size:13px; font-weight:600; color:#e8e8e8;
         background:#2a2f37; border:1px solid #3a414c; border-radius:8px;
         padding:7px 12px; cursor:pointer; }
@@ -310,6 +337,7 @@ INDEX_HTML = r"""<!doctype html>
   <span class="ctl"><input id="minutes" type="number" min="1" max="120" value="15"> min</span>
   <button class="btn go" id="startStop">Start</button>
   <button class="btn danger" id="resetAll">Reset All</button>
+  <select id="pack" class="sel" title="Voice pack"><option value="">Browser voice</option></select>
   <button class="btn" id="audioBtn">🔇 Audio</button>
 </header>
 <div id="results">
@@ -387,6 +415,41 @@ function summarize(){
   if (blue.length) parts.push('Blue holds ' + joinNames(blue));
   if (neu.length) parts.push(joinNames(neu) + (neu.length===1 ? ' is neutral' : ' are neutral'));
   return parts.join('. ') + '.';
+}
+// Voice packs: play a pre-rendered clip if the selected pack has it, else TTS.
+let packs = {}, selectedPack = localStorage.getItem('voicePack') || '';
+const clipQueue = []; let clipAudio = null;
+function clipUrl(clip){
+  if (selectedPack && packs[selectedPack] && packs[selectedPack].includes(clip + '.mp3'))
+    return '/sounds/' + encodeURIComponent(selectedPack) + '/' + clip + '.mp3';
+  return null;
+}
+function playNextClip(){
+  const url = clipQueue.shift();
+  if (!url){ clipAudio = null; return; }
+  clipAudio = new Audio(url);
+  clipAudio.onended = clipAudio.onerror = playNextClip;
+  clipAudio.play().catch(() => playNextClip());
+}
+function playClip(url){ clipQueue.push(url); if (!clipAudio) playNextClip(); }
+function announce(clip, ttsText, team){
+  if (!audioOn) return;
+  const url = clipUrl(clip);
+  if (url) playClip(url); else { tone(team); say(ttsText); }
+}
+function loadPacks(){
+  fetch('/api/packs').then(r => r.json()).then(d => {
+    packs = d || {};
+    const sel = document.getElementById('pack');
+    sel.innerHTML = '<option value="">Browser voice</option>';
+    Object.keys(packs).forEach(name => {
+      const o = document.createElement('option'); o.value = name; o.textContent = name;
+      sel.appendChild(o);
+    });
+    if (!(selectedPack && packs[selectedPack])) selectedPack = '';
+    sel.value = selectedPack;
+    sel.onchange = () => { selectedPack = sel.value; localStorage.setItem('voicePack', selectedPack); };
+  }).catch(() => {});
 }
 
 function fmt(sec){
@@ -503,11 +566,12 @@ es.onmessage = (e) => {
     if (audioOn) {
       const mins = Math.round(d.duration_s/60);
       if (!game.running && d.running) {
-        tone('blue'); say('Game on. ' + mins + (mins===1?' minute.':' minutes.'));
+        announce('start', 'Game on. ' + mins + (mins===1?' minute.':' minutes.'), 'blue');
       } else if (game.running && !d.running && d.remaining_s === 0) {
-        const w = winnerText(); tone(w.team||'red'); say('Time! ' + w.say + '.');
+        const w = winnerText();
+        announce('over_' + (w.team||'tie'), 'Time! ' + w.say + '.', w.team||'red');
       } else if (game.running && d.running && game.remaining_s > 60 && d.remaining_s <= 60) {
-        say('One minute remaining.');
+        announce('one_minute', 'One minute remaining.', null);
       }
     }
     game = d; renderGame(); return;
@@ -521,8 +585,7 @@ es.onmessage = (e) => {
                  arrival: changed ? Date.now() : prev.arrival };
   render();
   if (audioOn && prev && prevOwner !== d.owner && (d.owner === 'red' || d.owner === 'blue')) {
-    tone(d.owner);
-    say(cap(d.id) + ' taken by ' + cap(d.owner) + '.');
+    announce('cap_' + d.id + '_' + d.owner, cap(d.id) + ' taken by ' + cap(d.owner) + '.', d.owner);
   }
 };
 // Audio enable toggle — the tap also unlocks browser audio for this device.
@@ -534,7 +597,7 @@ audioBtn.onclick = () => {
   if (audioOn) {
     try { if (!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
           audioCtx.resume(); } catch(e){}
-    say('Audio enabled.');
+    announce('audio_enabled', 'Audio enabled.', null);
   } else if ('speechSynthesis' in window) {
     speechSynthesis.cancel();
   }
@@ -548,6 +611,7 @@ setInterval(() => {
 }, SUMMARY_MS);
 setInterval(render, 1000);
 renderGame();
+loadPacks();
 </script>
 </body>
 </html>"""

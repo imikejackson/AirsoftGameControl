@@ -18,7 +18,10 @@ sudo apt-get install -y python3-flask python3-paho-mqtt
 
 echo "[deploy] installing app to $APP_DIR ..."
 mkdir -p "$APP_DIR"
+mkdir -p "$APP_DIR/sounds"     # drop voice-pack folders here (one dir per pack)
 cp "$SRC/app.py" "$APP_DIR/app.py"
+# Copy any bundled voice packs alongside the script (optional).
+if [ -d "$SRC/sounds" ]; then cp -r "$SRC/sounds/." "$APP_DIR/sounds/"; fi
 
 echo "[deploy] writing systemd service ..."
 sudo tee /etc/systemd/system/airsoft-dashboard.service >/dev/null <<EOF
