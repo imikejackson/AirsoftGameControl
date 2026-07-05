@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 20
+#define FIRMWARE_VERSION 21
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -98,9 +98,17 @@
 // ---------------------------------------------------------------------------
 // Game logic
 // ---------------------------------------------------------------------------
-// A team must hold their button continuously this long to capture the point
-// (CLAUDE.md: 2-3s to prevent accidental griefing).
+// A team must hold their button continuously this long to capture the point.
+// Kept short (0.5s) for snappy, near-instant flips; still long enough to reject
+// an accidental brush of the button.
 #define CAPTURE_HOLD_MS 500UL
+
+// Grace window: a momentary loss of the button during a capture (contact bounce
+// on cheap buttons, a loose terminal) is tolerated for this long before the
+// capture aborts. This keeps a hold from restarting on every flicker, so the
+// effective capture time lands at ~CAPTURE_HOLD_MS instead of dragging out over
+// several retries. The countdown pauses (does not reset) during the gap.
+#define CAPTURE_GRACE_MS 200UL
 
 // ---------------------------------------------------------------------------
 // Onboard status RGB LED

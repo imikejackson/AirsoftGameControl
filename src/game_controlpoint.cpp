@@ -15,6 +15,7 @@ unsigned long g_ownerStart = 0;          // millis() when current owner took it
 
 Team          g_capturing    = TEAM_NONE;  // team mid-capture, NONE if none
 unsigned long g_captureStart  = 0;
+unsigned long g_captureLostMs = 0;         // when the button dropped mid-capture (0 = held)
 bool          g_stateChanged  = false;     // owner/timers/running changed -> republish
 bool          g_running       = true;      // round active? paused freezes everything
 
@@ -96,15 +97,34 @@ void gameLoop() {
   }
 
   const Team attempt = attemptingTeam();
-  if (attempt == TEAM_NONE) {
-    g_capturing = TEAM_NONE;  // released or conflict -> capture aborts
-  } else if (attempt != g_capturing) {
-    g_capturing   = attempt;  // a new capture attempt starts the countdown
-    g_captureStart = now;
-  } else if ((now - g_captureStart) >= CAPTURE_HOLD_MS) {
+
+  if (g_capturing != TEAM_NONE) {
+    // A capture is already under way.
+    if (attempt == g_capturing) {
+      g_captureLostMs = 0;                 // still held — clear any grace timer
+    } else if (attempt == TEAM_NONE) {
+      // Momentary loss (contact bounce / loose terminal). Tolerate it for the
+      // grace window: keep the countdown where it is rather than restarting.
+      if (g_captureLostMs == 0) g_captureLostMs = now;
+      if ((now - g_captureLostMs) >= CAPTURE_GRACE_MS) g_capturing = TEAM_NONE;
+    } else {
+      // The other team grabbed the button — hand the capture to them.
+      g_capturing     = attempt;
+      g_captureStart  = now;
+      g_captureLostMs = 0;
+    }
+  } else if (attempt != TEAM_NONE) {
+    g_capturing     = attempt;             // start a fresh capture countdown
+    g_captureStart  = now;
+    g_captureLostMs = 0;
+  }
+
+  // Complete only while the button is actually held (not during a grace gap).
+  if (g_capturing != TEAM_NONE && g_captureLostMs == 0 &&
+      (now - g_captureStart) >= CAPTURE_HOLD_MS) {
     // Held long enough — transfer ownership, banking the old owner's time.
     bankOwnerTime(now);
-    g_owner        = attempt;
+    g_owner        = g_capturing;
     g_ownerStart   = now;
     g_capturing    = TEAM_NONE;
     g_stateChanged = true;
