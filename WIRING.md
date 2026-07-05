@@ -12,7 +12,7 @@ if they ever disagree, the source files win.
 ## Quick pin map
 
 | GPIO | Connects to | Notes |
-|-----:|-------------|-------|
+|------|-------------|-------|
 | **25** | **Red button** | other leg → GND, internal pull-up (active-low) |
 | **26** | **Blue button** | other leg → GND, internal pull-up (active-low) |
 | 27 | Reset button *(optional)* | other leg → GND; not currently installed |
@@ -57,7 +57,7 @@ the owning team's color (and blinks the capturing team's color during a hold).
 ## 2" ST7789 LCD (Waveshare ST7789V, 240×320 IPS) — SPI
 
 | LCD pin | ESP32 | Notes |
-|---------|-------|-------|
+| ------- | ----- | ----- |
 | **VCC** | **3.3 V** | ⚠️ 3.3 V, not 5 V |
 | **GND** | GND | |
 | **SCL / SCLK** | **GPIO 18** | SPI clock |
