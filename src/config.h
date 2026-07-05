@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 21
+#define FIRMWARE_VERSION 22
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -152,7 +152,7 @@
 // strip from a separate 5V supply (share ground with the ESP32). Shows the
 // owning team's color, a progress-fill during a capture, and a dim idle glow
 // when neutral. SET NUM_LEDS to your strip's actual LED count.
-#define NUM_LEDS       60
+#define NUM_LEDS       120
 #define LED_BRIGHTNESS 120    // global brightness 0-255
 
 // Power budget for the strip's 5V supply. FastLED auto-dims so total draw never
