@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 16
+#define FIRMWARE_VERSION 20
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -100,7 +100,7 @@
 // ---------------------------------------------------------------------------
 // A team must hold their button continuously this long to capture the point
 // (CLAUDE.md: 2-3s to prevent accidental griefing).
-#define CAPTURE_HOLD_MS 1500UL
+#define CAPTURE_HOLD_MS 500UL
 
 // ---------------------------------------------------------------------------
 // Onboard status RGB LED
@@ -136,6 +136,21 @@
 // Landscape, team-colored background + a large 7-segment timer. No presence
 // probe (SPI has no ACK); if unwired the writes simply go nowhere.
 #define LCD_REFRESH_MS 200UL
+
+// ---------------------------------------------------------------------------
+// WS2812B ownership LED strip
+// ---------------------------------------------------------------------------
+// Data on PIN_LED_DATA (GPIO 5), driven by FastLED. Power is injected into the
+// strip from a separate 5V supply (share ground with the ESP32). Shows the
+// owning team's color, a progress-fill during a capture, and a dim idle glow
+// when neutral. SET NUM_LEDS to your strip's actual LED count.
+#define NUM_LEDS       60
+#define LED_BRIGHTNESS 120    // global brightness 0-255
+
+// Power budget for the strip's 5V supply. FastLED auto-dims so total draw never
+// exceeds this (see leds.cpp). 4500mA suits a 5V/5A supply shared with the
+// ESP32 (~500mA headroom). Bump ONLY if you fit a larger 5V supply.
+#define LED_MAX_MILLIAMPS 4500
 
 // ---------------------------------------------------------------------------
 // Pin assignments — Control Point reference (see CLAUDE.md)

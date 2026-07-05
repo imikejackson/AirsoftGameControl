@@ -19,6 +19,7 @@
 #include "game_controlpoint.h"
 #include "oled.h"
 #include "lcd.h"
+#include "leds.h"
 
 // Publish the current game state as a retained JSON payload (small, hand-built
 // to avoid pulling ArduinoJson into main). Called on each ownership change.
@@ -94,6 +95,7 @@ void setup() {
 
   oledSetup();  // live display; the game still runs headless if absent
   lcdSetup();   // ST7789 control-point display (team color + big timers)
+  ledsSetup();  // WS2812B ownership strip on GPIO 5 (external-powered)
 }
 
 // Drive the onboard RGB from the GAME state: solid owner color when held, the
@@ -131,6 +133,11 @@ void loop() {
 
   updateStatusLed();  // onboard RGB reflects ownership/capture
 
+  // WS2812B ownership strip: solid team color when held, capturing-team
+  // progress-fill during the hold, dim idle glow when neutral.
+  ledsShow(gameOwner(), gameCaptureInProgress(), gameCapturingTeam(),
+           gameCaptureElapsedMs(), gameRunning());
+
   // Live game displays. Both are driven (different buses): the OLED (I2C) and
   // the ST7789 LCD (SPI). Each throttles itself and no-ops if not connected.
   oledShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
@@ -151,7 +158,4 @@ void loop() {
     Serial.printf("[hb] wifi: %s | mqtt: %s\n",
                   wifiStatusString().c_str(), mqttStatusString().c_str());
   }
-
-  // Next: WS2812B ownership strip and the 2" ST7789 LCD (team-colored screen +
-  // large timers) will consume the same game state. Stay non-blocking.
 }

@@ -3,6 +3,7 @@
 //
 #include "statusled.h"
 #include "config.h"
+#include "leds.h"
 
 #include <Arduino.h>
 
@@ -12,13 +13,14 @@ constexpr uint8_t kLevel = 60;
 }
 
 void statusLedSetup() {
-  // neopixelWrite() configures the pin/RMT on first use; just blank it.
-  statusLedSetColor(0, 0, 0);
+  // No-op: the onboard pixel is a FastLED controller now, registered and
+  // blanked in ledsSetup() (which runs after this). Driving it here — before
+  // FastLED is initialized — would be a no-op at best, so we defer entirely.
 }
 
 void statusLedSetColor(uint8_t r, uint8_t g, uint8_t b) {
-  // Core helper drives a single WS2812 (handles GRB ordering internally).
-  neopixelWrite(PIN_STATUS_RGB, r, g, b);
+  // Delegate to FastLED so a single RMT driver owns every WS2812 on the board.
+  ledsSetStatus(r, g, b);
 }
 
 void statusLedShowTeam(Team team) {

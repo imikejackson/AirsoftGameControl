@@ -1,0 +1,22 @@
+#pragma once
+//
+// leds.h — WS2812B ownership strip (FastLED) on PIN_LED_DATA (GPIO 5).
+//
+// Consumes the same game state as the LCD/RGB: solid team color when a team
+// owns the point, a progress-fill in the capturing team's color during the
+// 2.5s hold, and a dim idle glow when neutral. Power is injected externally;
+// the ESP32 only drives data + shares ground.
+//
+#include "types.h"
+
+void ledsSetup();
+
+// Call every loop() iteration. Self-throttles to a sane frame rate.
+void ledsShow(Team owner, bool capturing, Team capturingTeam,
+              uint32_t captureElapsedMs, bool running);
+
+// Onboard status pixel (GPIO 2). Driven through FastLED — NOT neopixelWrite —
+// so a single RMT owner manages every WS2812 on the board (mixing the two RMT
+// drivers makes FastLED fail to bind the strip pin). statusled.cpp delegates
+// here. Safe to call after ledsSetup().
+void ledsSetStatus(uint8_t r, uint8_t g, uint8_t b);
