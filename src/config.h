@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 23
+#define FIRMWARE_VERSION 24
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -162,6 +162,10 @@
 #define CHASE_STEP_MS     22   // ms the comet advances one pixel (lower = faster)
 #define CHASE_TAIL        12   // comet length in pixels (bright head + fading tail)
 #define CHASE_BASE_SCALE  55   // brightness of the static team-color base (0-255)
+#define CHASE_SPACING     30   // approx pixels between comets; a train of
+                               // NUM_LEDS/CHASE_SPACING comets is tiled evenly
+                               // around the strip. Raise for fewer comets, set
+                               // >= NUM_LEDS for a single comet.
 
 // Power budget for the strip's 5V supply. FastLED auto-dims so total draw never
 // exceeds this (see leds.cpp). 4500mA suits a 5V/5A supply shared with the

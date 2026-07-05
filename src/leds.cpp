@@ -88,13 +88,21 @@ void ledsShow(Team owner, bool capturing, Team capturingTeam,
       CRGB base = c;
       base.nscale8_video(CHASE_BASE_SCALE);
       fill_solid(g_leds, NUM_LEDS, base);
+      // A train of evenly-tiled comets. Spacing by NUM_LEDS/comets (rather than
+      // raw CHASE_SPACING) keeps the gaps uniform across the wrap seam.
+      int comets = NUM_LEDS / CHASE_SPACING;
+      if (comets < 1) comets = 1;
+      const int spacing = NUM_LEDS / comets;
       const int head = (int)((millis() / CHASE_STEP_MS) % NUM_LEDS);
-      for (int i = 0; i < CHASE_TAIL; i++) {
-        const int p = (head - i + NUM_LEDS) % NUM_LEDS;
-        const uint8_t f = 255 - (uint8_t)(i * 255 / CHASE_TAIL);  // bright head -> dim tail
-        CRGB seg = c;
-        seg.nscale8_video(f);
-        g_leds[p] += seg;
+      for (int cmt = 0; cmt < comets; cmt++) {
+        const int h = (head + cmt * spacing) % NUM_LEDS;
+        for (int i = 0; i < CHASE_TAIL; i++) {
+          const int p = (h - i + NUM_LEDS) % NUM_LEDS;
+          const uint8_t f = 255 - (uint8_t)(i * 255 / CHASE_TAIL);  // bright head -> dim tail
+          CRGB seg = c;
+          seg.nscale8_video(f);
+          g_leds[p] += seg;
+        }
       }
     }
   } else {
