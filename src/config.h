@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 22
+#define FIRMWARE_VERSION 23
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -154,6 +154,14 @@
 // when neutral. SET NUM_LEDS to your strip's actual LED count.
 #define NUM_LEDS       120
 #define LED_BRIGHTNESS 120    // global brightness 0-255
+
+// Owner "chase" animation: while a team holds the point, a bright comet of the
+// team color sweeps along a dim team-color base. Pure eye-candy — CPU cost is
+// negligible (per-frame math is a few microseconds; FastLED.show() cost depends
+// only on LED count, and we already show() every frame). Tunables:
+#define CHASE_STEP_MS     22   // ms the comet advances one pixel (lower = faster)
+#define CHASE_TAIL        12   // comet length in pixels (bright head + fading tail)
+#define CHASE_BASE_SCALE  55   // brightness of the static team-color base (0-255)
 
 // Power budget for the strip's 5V supply. FastLED auto-dims so total draw never
 // exceeds this (see leds.cpp). 4500mA suits a 5V/5A supply shared with the

@@ -77,12 +77,31 @@ void ledsShow(Team owner, bool capturing, Team capturingTeam,
     }
   } else if (owner != TEAM_NONE) {
     CRGB c = teamColor(owner);
-    if (!running) c.nscale8_video(70);  // dimmed when paused / game over
-    fill_solid(g_leds, NUM_LEDS, c);
+    if (!running) {
+      // Paused / game over: static dimmed color so it reads as "frozen".
+      c.nscale8_video(70);
+      fill_solid(g_leds, NUM_LEDS, c);
+    } else {
+      // Active ownership: a bright comet chases along a dim team-color base.
+      // The base keeps the strip unmistakably team-colored; the comet adds
+      // motion. Saturating add so the tail glows over the base (no dark wake).
+      CRGB base = c;
+      base.nscale8_video(CHASE_BASE_SCALE);
+      fill_solid(g_leds, NUM_LEDS, base);
+      const int head = (int)((millis() / CHASE_STEP_MS) % NUM_LEDS);
+      for (int i = 0; i < CHASE_TAIL; i++) {
+        const int p = (head - i + NUM_LEDS) % NUM_LEDS;
+        const uint8_t f = 255 - (uint8_t)(i * 255 / CHASE_TAIL);  // bright head -> dim tail
+        CRGB seg = c;
+        seg.nscale8_video(f);
+        g_leds[p] += seg;
+      }
+    }
   } else {
-    // Neutral: a clearly-visible white "available" breathing glow.
+    // Neutral (no owner), a breathing glow: WHITE while idle between rounds,
+    // GREEN once the round is live and the point is up for grabs.
     const uint8_t b = beatsin8(20, 30, 140);
-    fill_solid(g_leds, NUM_LEDS, CRGB(b, b, b));
+    fill_solid(g_leds, NUM_LEDS, running ? CRGB(0, b, 0) : CRGB(b, b, b));
   }
   FastLED.show();
 }
