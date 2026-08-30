@@ -26,3 +26,13 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
 // to call in a loop: it only repaints when `sel` or `secondsLeft` changes.
 void lcdShowWifiPicker(const char *const labels[], const char *const ssids[],
                        int count, int sel, int secondsLeft);
+
+// Local game menu (opened by holding the reset button). A titled list of game
+// presets with `sel` highlighted; Red cycles, Blue starts. Only repaints on a
+// selection change, so it's cheap to call in a loop.
+void lcdShowGameMenu(const char *const labels[], int count, int sel);
+
+// Force the next lcdShowGame() to fully repaint. Call after a full-screen
+// overlay (WiFi picker / game menu) so the game screen isn't left with stale
+// menu pixels (lcdShowGame otherwise only repaints changed fields).
+void lcdForceRepaint();

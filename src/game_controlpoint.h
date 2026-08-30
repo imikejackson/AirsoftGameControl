@@ -44,6 +44,16 @@ uint32_t gameRemainingMs();
 // running toggle), so the caller can publish on the edge. Consuming clears it.
 bool gameConsumeStateChanged();
 
-// Zero all timers and return to neutral. Triggered by the reset button (if
-// wired), an MQTT command, or the Serial "reset" command.
+// Zero all timers and return to neutral. Triggered by a quick TAP of the reset
+// button (if wired), an MQTT command, or the Serial "reset" command.
 void gameReset();
+
+// Returns true once when the reset button has been HELD long enough to open the
+// local game menu (see RESET_HOLD_MS). Main polls this and shows the menu.
+bool gameConsumeMenuRequest();
+
+// Start a game locally on this node with no server involved: zero timers, go
+// neutral, and run. durationMs > 0 runs a local countdown that ends the round at
+// zero; durationMs == 0 is an endless round (no clock). This is the standalone
+// fallback for when the broker/dashboard isn't available.
+void gameStartLocal(uint32_t durationMs);

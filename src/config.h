@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 26
+#define FIRMWARE_VERSION 27
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -108,6 +108,15 @@
 // Kept short (0.5s) for snappy, near-instant flips; still long enough to reject
 // an accidental brush of the button.
 #define CAPTURE_HOLD_MS 500UL
+
+// Reset button: a quick TAP zeros timers (neutral); a long HOLD opens the local
+// game menu on the LCD (start a game standalone, no server needed). This is the
+// threshold that separates a tap from a hold.
+#define RESET_HOLD_MS 1500UL
+
+// Local game menu: auto-closes (cancels) after this long with no button input,
+// so it can't get stuck open on a deployed node.
+#define LOCAL_MENU_TIMEOUT_MS 15000UL
 
 // Grace window: a momentary loss of the button during a capture (contact bounce
 // on cheap buttons, a loose terminal) is tolerated for this long before the

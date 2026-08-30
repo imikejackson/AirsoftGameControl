@@ -128,6 +128,65 @@ static int runWifiPicker() {
   return chosen;
 }
 
+// Local game presets shown in the reset-hold menu. durationMs 0 = endless (no
+// clock). All King-of-the-Hill today; new modes drop in as more rows once their
+// game logic exists.
+struct LocalGamePreset { const char *label; uint32_t durationMs; };
+static const LocalGamePreset kLocalGames[] = {
+    {"KotH  5 min", 5UL * 60 * 1000},
+    {"KotH 10 min", 10UL * 60 * 1000},
+    {"KotH 15 min", 15UL * 60 * 1000},
+    {"KotH endless", 0},
+};
+
+// Local game menu: start a game standalone from the node, no server needed.
+// Opened by holding the reset button (gameConsumeMenuRequest). Red cycles the
+// highlight, Blue selects; a "Cancel" row and a timeout both back out. Blocks
+// the main loop while open (an intentional operator action), but keeps the
+// network/MQTT/OTA serviced so the connection doesn't drop.
+static void runLocalGameMenu() {
+  const int games = (int)(sizeof(kLocalGames) / sizeof(kLocalGames[0]));
+  const int count = games + 1;  // + a trailing "Cancel" row
+  const char *labels[8];
+  const int n = (count > 8) ? 8 : count;
+  for (int i = 0; i < games && i < 7; i++) labels[i] = kLocalGames[i].label;
+  labels[games < 7 ? games : 7] = "Cancel";
+
+  int sel = 0;
+  buttonsLoop();
+  bool lastRed  = buttonPressed(TEAM_RED);
+  bool lastBlue = buttonPressed(TEAM_BLUE);
+
+  Serial.println("[game] local game menu open");
+  const unsigned long start = millis();
+  for (;;) {
+    networkLoop();  // keep the connection alive while we block here
+    otaLoop();
+    mqttLoop();
+
+    buttonsLoop();
+    const bool red  = buttonPressed(TEAM_RED);
+    const bool blue = buttonPressed(TEAM_BLUE);
+    const bool redEdge  = red  && !lastRed;
+    const bool blueEdge = blue && !lastBlue;
+    lastRed = red; lastBlue = blue;
+
+    if (redEdge) sel = (sel + 1) % n;
+    if (blueEdge) {
+      if (sel < games) gameStartLocal(kLocalGames[sel].durationMs);
+      else             Serial.println("[game] local menu cancelled");
+      break;
+    }
+    if (millis() - start >= LOCAL_MENU_TIMEOUT_MS) {
+      Serial.println("[game] local menu timed out");
+      break;
+    }
+    lcdShowGameMenu(labels, n, sel);
+    delay(15);
+  }
+  lcdForceRepaint();  // repaint the game screen over the menu on the next loop
+}
+
 void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(200);  // brief settle so the first logs aren't lost; only in setup()
@@ -189,6 +248,9 @@ void loop() {
 
   buttonsLoop();   // debounce + button edge events
   gameLoop();      // capture countdown, ownership transfer, cumulative timers
+
+  // Reset button held -> open the on-device local game menu (standalone start).
+  if (gameConsumeMenuRequest()) runLocalGameMenu();
 
   // On a game-state change (capture, reset, or start/stop), report over MQTT.
   if (gameConsumeStateChanged()) publishGameState();

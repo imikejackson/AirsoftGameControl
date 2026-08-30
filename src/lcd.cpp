@@ -30,6 +30,7 @@ String        g_lastStatus = "";
 int           g_lastBarPct = -1;
 int           g_pickerSel  = -999;  // WiFi picker: last-rendered selection
 int           g_pickerSecs = -999;  // WiFi picker: last-rendered countdown secs
+int           g_menuSel    = -999;  // game menu: last-rendered selection
 
 const int ROW_H    = 100;
 const int RED_Y    = 0;
@@ -168,8 +169,9 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
     }
   }
 
-  // A game screen was drawn; make the next picker call (unlikely) full-repaint.
+  // A game screen was drawn; make the next picker/menu call full-repaint.
   g_pickerSel = -999;
+  g_menuSel   = -999;
 }
 
 void lcdShowWifiPicker(const char *const labels[], const char *const ssids[],
@@ -228,4 +230,44 @@ void lcdShowWifiPicker(const char *const labels[], const char *const ssids[],
              count == 2 ? "Red / Blue = pick" : "Red = next   Blue = OK");
     tft.drawString(buf, W / 2, fy + 3, 2);
   }
+  g_menuSel = -999;  // WiFi picker was shown; force game-menu full-repaint next
+}
+
+void lcdShowGameMenu(const char *const labels[], int count, int sel) {
+  if (sel == g_menuSel) return;  // only repaint when the selection changes
+  g_menuSel   = sel;
+  g_pickerSel = -999;            // force WiFi-picker full-repaint if shown next
+  const int W = tft.width();
+  const int H = tft.height();
+
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextColor(TFT_WHITE, TFT_BLACK);
+  tft.setTextDatum(TC_DATUM);
+  tft.drawString("START GAME", W / 2, 6, 4);
+
+  const int top = 42, footer = 24, gap = 6;
+  const int n = (count < 1) ? 1 : count;
+  int rowH = (H - top - footer - (n - 1) * gap) / n;
+  if (rowH > 44) rowH = 44;
+
+  for (int i = 0; i < count; i++) {
+    const int y = top + i * (rowH + gap);
+    const bool hi = (i == sel);
+    const uint16_t bg = hi ? tft.color565(0, 110, 0) : tft.color565(30, 30, 30);
+    tft.fillRoundRect(10, y, W - 20, rowH, 6, bg);
+    if (hi) tft.drawRoundRect(10, y, W - 20, rowH, 6, TFT_WHITE);
+    tft.setTextColor(TFT_WHITE, bg);
+    tft.setTextDatum(ML_DATUM);
+    tft.drawString(labels[i], 22, y + rowH / 2, 4);
+  }
+
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  tft.setTextDatum(TC_DATUM);
+  tft.drawString("Red = next    Blue = select", W / 2, H - 18, 2);
+}
+
+void lcdForceRepaint() {
+  g_redBright = g_blueBright = -1;
+  g_lastRedT = g_lastBlueT = g_lastStatus = "";
+  g_lastBarPct = -1;
 }

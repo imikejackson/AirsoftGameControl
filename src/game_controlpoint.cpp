@@ -28,6 +28,9 @@ unsigned long g_clockReceiptMs  = 0;       // millis() of that update
 bool          g_resetStable   = false;
 bool          g_resetReading  = false;
 unsigned long g_resetChangeMs = 0;
+unsigned long g_resetPressMs  = 0;      // when the reset button went down
+bool          g_menuFired     = false;  // long-press already opened the menu
+bool          g_menuRequested = false;  // latched request for the local game menu
 #endif
 
 // Fold the current owner's elapsed time into its banked total.
@@ -68,6 +71,9 @@ void gameLoop() {
 
 #ifdef PIN_BTN_RESET
   // Debounce the optional physical reset button (safe if unwired: reads HIGH).
+  // Quick TAP = reset (fires on release); long HOLD = request the local game
+  // menu (fires once during the hold). Distinguishing them at release/hold keeps
+  // both behaviors on a single button.
   const bool rd = (digitalRead(PIN_BTN_RESET) == LOW);
   if (rd != g_resetReading) {
     g_resetReading  = rd;
@@ -75,10 +81,18 @@ void gameLoop() {
   }
   if ((now - g_resetChangeMs) >= BUTTON_DEBOUNCE_MS && rd != g_resetStable) {
     g_resetStable = rd;
-    if (rd) {
-      Serial.println("[game] reset button pressed");
+    if (rd) {                       // pressed
+      g_resetPressMs = now;
+      g_menuFired    = false;
+    } else if (!g_menuFired) {       // released without a long-hold -> reset
+      Serial.println("[game] reset (tap)");
       gameReset();
     }
+  }
+  if (g_resetStable && !g_menuFired && (now - g_resetPressMs) >= RESET_HOLD_MS) {
+    g_menuFired    = true;
+    g_menuRequested = true;          // main picks this up and opens the menu
+    Serial.println("[game] reset held -> local game menu");
   }
 #endif
 
@@ -191,4 +205,33 @@ void gameReset() {
   g_capturing    = TEAM_NONE;
   g_stateChanged = true;
   Serial.println("[game] reset -> neutral, timers zeroed");
+}
+
+bool gameConsumeMenuRequest() {
+#ifdef PIN_BTN_RESET
+  const bool r = g_menuRequested;
+  g_menuRequested = false;
+  return r;
+#else
+  return false;
+#endif
+}
+
+void gameStartLocal(uint32_t durationMs) {
+  const unsigned long now = millis();
+  g_owner        = TEAM_NONE;
+  g_cumMs[TEAM_NONE] = g_cumMs[TEAM_RED] = g_cumMs[TEAM_BLUE] = 0;
+  g_ownerStart   = now;
+  g_capturing    = TEAM_NONE;
+  if (durationMs > 0) {             // timed round: run a local countdown
+    g_setRemainingMs = durationMs;
+    g_clockReceiptMs = now;
+    g_hasClock       = true;
+  } else {                          // endless: no clock, never auto-ends
+    g_hasClock = false;
+  }
+  g_running      = true;
+  g_stateChanged = true;
+  Serial.printf("[game] LOCAL start (%lus)\n",
+                (unsigned long)(durationMs / 1000));
 }
