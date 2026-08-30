@@ -17,7 +17,17 @@
 #include <WiFi.h>
 #include <Preferences.h>
 
+// Preset WiFi networks for the on-boot picker. Defined in secrets.h; fall back
+// to a single preset built from the DEFAULT_* creds if not provided.
+#ifndef WIFI_PRESETS
+#define WIFI_PRESETS { { "Default", DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS } }
+#endif
+
 namespace {
+
+struct WifiPreset { const char *label; const char *ssid; const char *pass; };
+const WifiPreset kPresets[] = WIFI_PRESETS;
+const int        kPresetCount = (int)(sizeof(kPresets) / sizeof(kPresets[0]));
 
 enum NetState {
   NET_IDLE,        // not yet started / no usable credentials
@@ -188,6 +198,41 @@ const String &wifiSsid()     { return g_ssid; }
 
 String wifiIpString() {
   return wifiConnected() ? WiFi.localIP().toString() : String("0.0.0.0");
+}
+
+// ---------------------------------------------------------------------------
+// WiFi presets + on-boot picker
+// ---------------------------------------------------------------------------
+
+int networkPresetCount() { return kPresetCount; }
+
+const char *networkPresetLabel(int i) {
+  return (i >= 0 && i < kPresetCount) ? kPresets[i].label : "";
+}
+
+const char *networkPresetSsid(int i) {
+  return (i >= 0 && i < kPresetCount) ? kPresets[i].ssid : "";
+}
+
+int networkLastPresetIndex() {
+  prefs.begin(NVS_NAMESPACE, /*readOnly=*/true);
+  int i = prefs.getInt("wifi_preset", 0);
+  prefs.end();
+  if (i < 0 || i >= kPresetCount) i = 0;
+  return i;
+}
+
+void networkApplyPreset(int i) {
+  if (i < 0 || i >= kPresetCount) return;
+  g_ssid = kPresets[i].ssid;
+  g_pass = kPresets[i].pass;
+  prefs.begin(NVS_NAMESPACE, /*readOnly=*/false);
+  prefs.putString("wifi_ssid", g_ssid);
+  prefs.putString("wifi_pass", g_pass);
+  prefs.putInt("wifi_preset", i);
+  prefs.end();
+  Serial.printf("[wifi] preset %d selected: %s (%s)\n", i, kPresets[i].label,
+                g_ssid.c_str());
 }
 
 // ---------------------------------------------------------------------------

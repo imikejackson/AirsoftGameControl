@@ -44,6 +44,21 @@ const char   *nodeTypeStr();
 // "airsoft-controlpoint-alpha".
 const String &nodeHostname();
 
+// --- WiFi presets + on-boot picker ----------------------------------------
+// Preset networks come from WIFI_PRESETS in secrets.h. The boot-time LCD picker
+// (in main) reads these to render the menu, then calls networkApplyPreset() for
+// the chosen one BEFORE networkSetup() connects. networkLastPresetIndex() gives
+// the last-selected preset (persisted in NVS) so the picker can default to it.
+int         networkPresetCount();
+const char *networkPresetLabel(int i);   // short display name, e.g. "Field"
+const char *networkPresetSsid(int i);    // the SSID that preset joins
+int         networkLastPresetIndex();    // last-used preset (NVS), clamped to range
+
+// Select a preset: persist its SSID/password (and the index) to NVS so the
+// subsequent networkSetup()/loadConfig() connects with it. Does not itself
+// start the radio.
+void networkApplyPreset(int i);
+
 // --- Runtime (re)provisioning ---------------------------------------------
 // Persist new values to NVS. Credential changes trigger an immediate
 // reconnect with the new SSID/password; the node ID change takes effect on

@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 25
+#define FIRMWARE_VERSION 26
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -68,6 +68,12 @@
 
 // NVS namespace for persisted runtime config (node ID, WiFi credentials).
 #define NVS_NAMESPACE "airsoft"
+
+// On-boot WiFi picker: the LCD shows the preset networks (from secrets.h) and
+// the Red/Blue buttons select one. If no button is pressed within this window,
+// the node auto-connects to the last-used network (so an unattended power-cycle
+// in the field just reconnects with no interaction). Set to 0 to disable.
+#define WIFI_PICKER_TIMEOUT_MS 8000UL
 
 // ---------------------------------------------------------------------------
 // MQTT configuration

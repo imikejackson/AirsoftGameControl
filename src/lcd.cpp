@@ -28,6 +28,8 @@ String        g_lastRedT   = "";
 String        g_lastBlueT  = "";
 String        g_lastStatus = "";
 int           g_lastBarPct = -1;
+int           g_pickerSel  = -999;  // WiFi picker: last-rendered selection
+int           g_pickerSecs = -999;  // WiFi picker: last-rendered countdown secs
 
 const int ROW_H    = 100;
 const int RED_Y    = 0;
@@ -164,5 +166,66 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
       tft.drawRect(6, y, bw, h, TFT_WHITE);
       tft.fillRect(6, y, bw * pct / 100, h, teamColor(capturingTeam));
     }
+  }
+
+  // A game screen was drawn; make the next picker call (unlikely) full-repaint.
+  g_pickerSel = -999;
+}
+
+void lcdShowWifiPicker(const char *const labels[], const char *const ssids[],
+                       int count, int sel, int secondsLeft) {
+  const int W = tft.width();
+  const int H = tft.height();
+
+  // Full layout only when the selection changes (or first call); the countdown
+  // updates in place so the screen doesn't flicker.
+  if (sel != g_pickerSel) {
+    g_pickerSel  = sel;
+    g_pickerSecs = -999;  // force the countdown line to repaint
+    tft.fillScreen(TFT_BLACK);
+
+    tft.setTextColor(TFT_WHITE, TFT_BLACK);
+    tft.setTextDatum(TC_DATUM);
+    tft.drawString("SELECT WiFi", W / 2, 8, 4);
+
+    const int top = 44, footer = 28, gap = 8;
+    const int n = (count < 1) ? 1 : count;
+    int rowH = (H - top - footer - (n - 1) * gap) / n;
+    if (rowH > 72) rowH = 72;
+
+    for (int i = 0; i < count; i++) {
+      const int y = top + i * (rowH + gap);
+      const bool hi = (i == sel);
+      // First two rows map to the Red / Blue buttons; the rest are grey.
+      const uint16_t full = (i == 0) ? TFT_RED : (i == 1) ? TFT_BLUE : TFT_DARKGREY;
+      const uint16_t dim  = (i == 0) ? tft.color565(80, 0, 0)
+                          : (i == 1) ? tft.color565(0, 0, 90)
+                                     : tft.color565(45, 45, 45);
+      const uint16_t bg = hi ? full : dim;
+      tft.fillRoundRect(10, y, W - 20, rowH, 8, bg);
+      if (hi) tft.drawRoundRect(10, y, W - 20, rowH, 8, TFT_WHITE);
+
+      const char *chip = (i == 0) ? "RED" : (i == 1) ? "BLUE" : "";
+      tft.setTextColor(TFT_WHITE, bg);
+      if (chip[0]) {
+        tft.setTextDatum(ML_DATUM);
+        tft.drawString(chip, 20, y + rowH / 2, 2);
+      }
+      tft.setTextDatum(TL_DATUM);
+      tft.drawString(labels[i], 95, y + 6, 4);          // friendly name
+      tft.drawString(ssids[i], 95, y + rowH - 20, 2);   // actual SSID
+    }
+  }
+
+  if (secondsLeft != g_pickerSecs) {
+    g_pickerSecs = secondsLeft;
+    const int fy = H - 24;
+    tft.fillRect(0, fy, W, 24, TFT_BLACK);
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setTextDatum(TC_DATUM);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "auto-connect in %ds    %s", secondsLeft,
+             count == 2 ? "Red / Blue = pick" : "Red = next   Blue = OK");
+    tft.drawString(buf, W / 2, fy + 3, 2);
   }
 }

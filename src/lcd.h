@@ -19,3 +19,10 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
                  uint32_t blueMs, bool capturing, Team capturingTeam,
                  uint32_t captureElapsedMs, bool connected, const String &ip,
                  bool running, int32_t remainingS);
+
+// On-boot WiFi network picker. `labels`/`ssids` are the menu rows (friendly
+// name + SSID); `sel` is the highlighted row; `secondsLeft` is the auto-connect
+// countdown. The first two rows are color-coded to the Red/Blue buttons. Cheap
+// to call in a loop: it only repaints when `sel` or `secondsLeft` changes.
+void lcdShowWifiPicker(const char *const labels[], const char *const ssids[],
+                       int count, int sel, int secondsLeft);

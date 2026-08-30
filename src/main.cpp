@@ -73,6 +73,61 @@ static void pollSerialCommands() {
                  "| mqtt <host> <port> | mqttstatus | reset | score");
 }
 
+// Boot-time WiFi network picker on the LCD. Shows the preset networks; the Red
+// and Blue buttons choose one. With exactly two presets, Red picks the first
+// and Blue the second; with more, Red cycles the highlight and Blue confirms.
+// If no button is pressed within WIFI_PICKER_TIMEOUT_MS the last-used network is
+// kept (returns -1 = "no change"), so an unattended power-cycle just reconnects.
+// Blocking is fine here: it runs in setup() before the radio/game come up.
+static int runWifiPicker() {
+  const int count = networkPresetCount();
+  if (count <= 1 || WIFI_PICKER_TIMEOUT_MS == 0) return -1;  // nothing to choose
+
+  const int n = (count > 8) ? 8 : count;
+  const char *labels[8];
+  const char *ssids[8];
+  for (int i = 0; i < n; i++) {
+    labels[i] = networkPresetLabel(i);
+    ssids[i]  = networkPresetSsid(i);
+  }
+
+  int sel = networkLastPresetIndex();
+  if (sel >= n) sel = 0;
+
+  // Prime edge detection so a button already held at power-on doesn't register.
+  buttonsLoop();
+  bool lastRed  = buttonPressed(TEAM_RED);
+  bool lastBlue = buttonPressed(TEAM_BLUE);
+
+  Serial.println("[wifi] boot picker: Red/Blue to choose network");
+  const unsigned long start = millis();
+  int chosen = -1;
+  for (;;) {
+    buttonsLoop();
+    const bool red  = buttonPressed(TEAM_RED);
+    const bool blue = buttonPressed(TEAM_BLUE);
+    const bool redEdge  = red  && !lastRed;
+    const bool blueEdge = blue && !lastBlue;
+    lastRed = red; lastBlue = blue;
+
+    if (n == 2) {
+      if (redEdge)  { chosen = 0; break; }
+      if (blueEdge) { chosen = 1; break; }
+    } else {
+      if (redEdge)  sel = (sel + 1) % n;
+      if (blueEdge) { chosen = sel; break; }
+    }
+
+    const unsigned long el = millis() - start;
+    if (el >= WIFI_PICKER_TIMEOUT_MS) { chosen = -1; break; }
+    const int secs = (int)((WIFI_PICKER_TIMEOUT_MS - el + 999) / 1000);
+    lcdShowWifiPicker(labels, ssids, n, sel, secs);
+    delay(15);  // gentle poll; setup context, nothing else running yet
+  }
+  Serial.printf("[wifi] picker result: %d\n", chosen);
+  return chosen;
+}
+
 void setup() {
   Serial.begin(SERIAL_BAUD);
   delay(200);  // brief settle so the first logs aren't lost; only in setup()
@@ -80,22 +135,29 @@ void setup() {
   Serial.println("=== Airsoft Control Point System ===");
   Serial.printf("node type: %s\n", NODE_TYPE_STR);
 
-  // Networking first: a flaky display must never keep a node offline
-  // (CLAUDE.md: WiFi/game must keep working regardless of peripherals).
-  networkSetup();
+  // Buttons + LCD first so the boot WiFi picker can use them. The picker has a
+  // bounded timeout, so it can't keep a node offline (CLAUDE.md: WiFi/game must
+  // keep working regardless of peripherals).
+  buttonsSetup();
+  lcdSetup();     // ST7789 control-point display (team color + big timers)
 
+  // Let the operator pick the WiFi network on the LCD (Red/Blue); otherwise keep
+  // the last-used network after the timeout. Applied before the radio starts.
+  {
+    const int sel = runWifiPicker();
+    if (sel >= 0) networkApplyPreset(sel);
+  }
+
+  networkSetup();  // connect with the (possibly just-picked) credentials
   mqttSetup();
   mqttSetCommandHandler(onMqttCommand);
+  otaSetup();      // arms once WiFi is up, inside otaLoop()
 
-  otaSetup();     // arms once WiFi is up, inside otaLoop()
-
-  buttonsSetup();
   statusLedSetup();
-  gameSetup();    // after buttonsSetup: the game reads debounced button state
+  gameSetup();     // after buttonsSetup: the game reads debounced button state
 
-  oledSetup();  // live display; the game still runs headless if absent
-  lcdSetup();   // ST7789 control-point display (team color + big timers)
-  ledsSetup();  // WS2812B ownership strip on GPIO 5 (external-powered)
+  oledSetup();     // live display; the game still runs headless if absent
+  ledsSetup();     // WS2812B ownership strip on GPIO 5 (external-powered)
 }
 
 // Drive the onboard RGB from the GAME state: solid owner color when held, the

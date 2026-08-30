@@ -15,6 +15,16 @@
 #define DEFAULT_WIFI_SSID  "YOUR_FIELD_SSID"
 #define DEFAULT_WIFI_PASS  "YOUR_WIFI_PASSWORD"
 
+// Preset WiFi networks for the on-device LCD picker (first = default). On boot
+// the LCD lists these and the Red/Blue buttons pick one; after a timeout it
+// auto-connects to the last-used network. Each entry: { label, ssid, password }.
+// If you omit this, the firmware falls back to a single preset built from
+// DEFAULT_WIFI_SSID/PASS above.
+#define WIFI_PRESETS { \
+  { "Home",  DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS }, \
+  { "Field", "FIELD_AP_SSID",   "FIELD_AP_PASSWORD" }, \
+}
+
 // OTA update password. Empty string = no auth. Set a real password before
 // deploying nodes in the field.
 #define OTA_PASSWORD       ""
