@@ -27,10 +27,12 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
 void lcdShowWifiPicker(const char *const labels[], const char *const ssids[],
                        int count, int sel, int secondsLeft);
 
-// Local game menu (opened by holding the reset button). A titled list of game
-// presets with `sel` highlighted; Red cycles, Blue starts. Only repaints on a
-// selection change, so it's cheap to call in a loop.
-void lcdShowGameMenu(const char *const labels[], int count, int sel);
+// Generic vertical menu: a `title`, a list of `labels` with `sel` highlighted,
+// and a footer. If `secondsLeft >= 0` the footer shows an auto-select countdown;
+// pass -1 for no countdown. Used by the boot mode picker and the reset-hold game
+// menu. Only repaints on a selection/countdown change, so it's cheap to loop.
+void lcdShowGameMenu(const char *title, const char *const labels[], int count,
+                     int sel, int secondsLeft);
 
 // Force the next lcdShowGame() to fully repaint. Call after a full-screen
 // overlay (WiFi picker / game menu) so the game screen isn't left with stale

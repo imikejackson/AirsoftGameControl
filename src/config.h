@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 27
+#define FIRMWARE_VERSION 28
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -74,6 +74,11 @@
 // the node auto-connects to the last-used network (so an unattended power-cycle
 // in the field just reconnects with no interaction). Set to 0 to disable.
 #define WIFI_PICKER_TIMEOUT_MS 8000UL
+
+// Second boot menu (after the WiFi picker): choose Connected (server-driven) vs
+// a local standalone game. Red cycles, Blue selects; on timeout it defaults to
+// Connected (the safe unattended choice — the node just joins the server).
+#define MODE_PICKER_TIMEOUT_MS 6000UL
 
 // ---------------------------------------------------------------------------
 // MQTT configuration

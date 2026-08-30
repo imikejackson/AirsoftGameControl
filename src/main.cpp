@@ -21,6 +21,12 @@
 #include "lcd.h"
 #include "leds.h"
 
+// Standalone mode (chosen in the boot mode picker): the node runs a local game
+// and ignores the server's authoritative airsoft/game/state, so a locally
+// started round isn't overridden. It still publishes its own state and accepts
+// OTA. Default false = Connected (server-driven).
+static bool g_standalone = false;
+
 // Publish the current game state as a retained JSON payload (small, hand-built
 // to avoid pulling ArduinoJson into main). Called on each ownership change.
 static void publishGameState() {
@@ -37,6 +43,7 @@ static void publishGameState() {
 static void onMqttCommand(const String &topic, const String &payload) {
   Serial.printf("[cmd] %s -> %s\n", topic.c_str(), payload.c_str());
   if (topic == "airsoft/game/state") {
+    if (g_standalone) return;  // local game owns run state in standalone mode
     JsonDocument doc;
     if (deserializeJson(doc, payload)) return;  // bad JSON -> ignore
     long rem = doc["remaining_s"] | -1L;
@@ -181,10 +188,58 @@ static void runLocalGameMenu() {
       Serial.println("[game] local menu timed out");
       break;
     }
-    lcdShowGameMenu(labels, n, sel);
+    const int secs =
+        (int)((LOCAL_MENU_TIMEOUT_MS - (millis() - start) + 999) / 1000);
+    lcdShowGameMenu("START GAME", labels, n, sel, secs);
     delay(15);
   }
   lcdForceRepaint();  // repaint the game screen over the menu on the next loop
+}
+
+// Boot mode picker (second menu, after the WiFi picker). Row 0 = Connected
+// (server-driven); the rest are local standalone presets from kLocalGames.
+// Red cycles, Blue selects; on timeout it defaults to Connected. Returns 0 for
+// Connected or (preset index + 1) for a standalone game.
+static int runModePicker() {
+  const int games = (int)(sizeof(kLocalGames) / sizeof(kLocalGames[0]));
+  const int count = games + 1;  // row 0 = Connected
+  const int n = (count > 8) ? 8 : count;
+  static String store[8];
+  const char *labels[8];
+  labels[0] = "Connected (server)";
+  for (int i = 1; i < n; i++) {
+    store[i] = String("Local: ") + kLocalGames[i - 1].label;
+    labels[i] = store[i].c_str();
+  }
+
+  int sel = 0;  // default highlight = Connected
+  buttonsLoop();
+  bool lastRed  = buttonPressed(TEAM_RED);
+  bool lastBlue = buttonPressed(TEAM_BLUE);
+
+  Serial.println("[mode] boot picker: Connected vs local game");
+  const unsigned long start = millis();
+  int chosen = 0;  // timeout -> Connected
+  for (;;) {
+    buttonsLoop();
+    const bool red  = buttonPressed(TEAM_RED);
+    const bool blue = buttonPressed(TEAM_BLUE);
+    const bool redEdge  = red  && !lastRed;
+    const bool blueEdge = blue && !lastBlue;
+    lastRed = red; lastBlue = blue;
+
+    if (redEdge)  sel = (sel + 1) % n;
+    if (blueEdge) { chosen = sel; break; }
+
+    const unsigned long el = millis() - start;
+    if (el >= MODE_PICKER_TIMEOUT_MS) { chosen = 0; break; }
+    const int secs = (int)((MODE_PICKER_TIMEOUT_MS - el + 999) / 1000);
+    lcdShowGameMenu("SELECT MODE", labels, n, sel, secs);
+    delay(15);
+  }
+  Serial.printf("[mode] result: %d (%s)\n", chosen,
+                chosen == 0 ? "connected" : "standalone");
+  return chosen;
 }
 
 void setup() {
@@ -200,11 +255,22 @@ void setup() {
   buttonsSetup();
   lcdSetup();     // ST7789 control-point display (team color + big timers)
 
-  // Let the operator pick the WiFi network on the LCD (Red/Blue); otherwise keep
-  // the last-used network after the timeout. Applied before the radio starts.
+  // Menu 1 — WiFi network (Red/Blue); keep the last-used one on timeout.
   {
     const int sel = runWifiPicker();
     if (sel >= 0) networkApplyPreset(sel);
+  }
+
+  // Menu 2 — operating mode: Connected (server) or a local standalone game.
+  // Only the team buttons are needed (no reset button required). Defaults to
+  // Connected on timeout. Remember the chosen local duration to start below.
+  int localDurationMs = -1;  // -1 = connected (no local game)
+  {
+    const int mode = runModePicker();  // 0 = connected; >0 = local preset index
+    if (mode > 0) {
+      g_standalone    = true;
+      localDurationMs = (int)kLocalGames[mode - 1].durationMs;
+    }
   }
 
   networkSetup();  // connect with the (possibly just-picked) credentials
@@ -217,6 +283,9 @@ void setup() {
 
   oledSetup();     // live display; the game still runs headless if absent
   ledsSetup();     // WS2812B ownership strip on GPIO 5 (external-powered)
+
+  // Standalone: start the chosen local game now that the game module is up.
+  if (g_standalone) gameStartLocal((uint32_t)localDurationMs);
 }
 
 // Drive the onboard RGB from the GAME state: solid owner color when held, the
