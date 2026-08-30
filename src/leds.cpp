@@ -64,10 +64,13 @@ void ledsSetStatus(uint8_t r, uint8_t g, uint8_t b) {
 void ledsRainbow() {
   if ((millis() - g_lastFrame) < FRAME_MS) return;
   g_lastFrame = millis();
-  // Scroll the starting hue over time so the rainbow chases along the strip.
   // deltaHue 4 => a full spectrum roughly every 64 LEDs (a few bands on a long
-  // strip). The FastLED power cap auto-dims if the frame would draw too much.
-  fill_rainbow(g_leds, NUM_LEDS, (uint8_t)(millis() / 20), 4);
+  // strip). Scroll the pattern one LED per CHASE_STEP_MS so it chases at the
+  // same speed as the capture comet. The FastLED power cap auto-dims the frame
+  // if it would draw too much.
+  const uint8_t deltaHue = 4;
+  const uint8_t startHue = (uint8_t)((millis() / CHASE_STEP_MS) * deltaHue);
+  fill_rainbow(g_leds, NUM_LEDS, startHue, deltaHue);
   g_status[0] = CRGB::Black;  // onboard pixel off while asleep
   FastLED.show();
 }
