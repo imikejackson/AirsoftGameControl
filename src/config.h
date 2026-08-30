@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 28
+#define FIRMWARE_VERSION 29
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -73,12 +73,24 @@
 // the Red/Blue buttons select one. If no button is pressed within this window,
 // the node auto-connects to the last-used network (so an unattended power-cycle
 // in the field just reconnects with no interaction). Set to 0 to disable.
-#define WIFI_PICKER_TIMEOUT_MS 8000UL
+// Auto-select countdown for the boot menus. The countdown FREEZES on the first
+// button press (once you interact, it waits for an explicit choice).
+#define WIFI_PICKER_TIMEOUT_MS 15000UL
 
 // Second boot menu (after the WiFi picker): choose Connected (server-driven) vs
 // a local standalone game. Red cycles, Blue selects; on timeout it defaults to
 // Connected (the safe unattended choice — the node just joins the server).
-#define MODE_PICKER_TIMEOUT_MS 6000UL
+#define MODE_PICKER_TIMEOUT_MS 15000UL
+
+// Re-enter the config menus (WiFi + mode) at runtime WITHOUT rebooting: hold
+// BOTH team buttons this long. Lets you reconfigure a sealed box (no reset/power
+// button wired) in the field.
+#define COMBO_HOLD_MS 10000UL
+
+// Sleep: with no game running and no button activity for this long, blank the
+// displays and run a rainbow LED chase. Any button press (or a game starting)
+// wakes it. Lower this while testing so you don't wait 10 minutes.
+#define SLEEP_TIMEOUT_MS 600000UL  // 10 minutes
 
 // ---------------------------------------------------------------------------
 // MQTT configuration

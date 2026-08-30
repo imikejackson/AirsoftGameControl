@@ -228,12 +228,21 @@ void lcdShowWifiPicker(const char *const labels[], const char *const ssids[],
     tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
     tft.setTextDatum(TC_DATUM);
     char buf[64];
-    snprintf(buf, sizeof(buf), "auto-connect in %ds    %s", secondsLeft,
-             count == 2 ? "Red / Blue = pick" : "Red = next   Blue = OK");
+    if (secondsLeft >= 0)
+      snprintf(buf, sizeof(buf), "auto-connect in %ds    %s", secondsLeft,
+               count == 2 ? "Red / Blue = pick" : "Red = next   Blue = OK");
+    else
+      snprintf(buf, sizeof(buf), "%s",
+               count == 2 ? "Red / Blue = pick" : "Red = next   Blue = OK");
     tft.drawString(buf, W / 2, fy + 3, 2);
   }
   g_menuSel  = -999;  // WiFi picker was shown; force game-menu full-repaint next
   g_menuSecs = -999;
+}
+
+void lcdBlank() {
+  tft.fillScreen(TFT_BLACK);
+  lcdForceRepaint();  // next lcdShowGame() fully redraws when we wake
 }
 
 void lcdShowGameMenu(const char *title, const char *const labels[], int count,

@@ -61,6 +61,17 @@ void ledsSetStatus(uint8_t r, uint8_t g, uint8_t b) {
   FastLED.show();
 }
 
+void ledsRainbow() {
+  if ((millis() - g_lastFrame) < FRAME_MS) return;
+  g_lastFrame = millis();
+  // Scroll the starting hue over time so the rainbow chases along the strip.
+  // deltaHue 4 => a full spectrum roughly every 64 LEDs (a few bands on a long
+  // strip). The FastLED power cap auto-dims if the frame would draw too much.
+  fill_rainbow(g_leds, NUM_LEDS, (uint8_t)(millis() / 20), 4);
+  g_status[0] = CRGB::Black;  // onboard pixel off while asleep
+  FastLED.show();
+}
+
 void ledsShow(Team owner, bool capturing, Team capturingTeam,
               uint32_t captureElapsedMs, bool running) {
   if ((millis() - g_lastFrame) < FRAME_MS) return;

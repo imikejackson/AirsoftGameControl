@@ -117,3 +117,14 @@ void oledShowGame(const String &nodeName, Team owner, uint32_t redMs,
 
   g_oled.display();
 }
+
+void oledSleep() {
+  if (!g_present) return;
+  g_oled.ssd1306_command(SSD1306_DISPLAYOFF);  // panel off (OLED burn-in guard)
+}
+
+void oledWake() {
+  if (!g_present) return;
+  g_oled.ssd1306_command(SSD1306_DISPLAYON);
+  g_lastDraw = 0;  // force an immediate redraw on the next oledShowGame()
+}

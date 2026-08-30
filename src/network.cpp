@@ -235,6 +235,14 @@ void networkApplyPreset(int i) {
                 g_ssid.c_str());
 }
 
+void networkReconnect() {
+  // Used when the network is re-picked at runtime: drop the current link and
+  // reconnect with the credentials now in g_ssid/g_pass.
+  if (!credentialsLookValid()) return;
+  g_backoffInterval = WIFI_RETRY_INTERVAL_MS;
+  beginConnect();
+}
+
 // ---------------------------------------------------------------------------
 // Runtime provisioning
 // ---------------------------------------------------------------------------

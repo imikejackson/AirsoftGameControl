@@ -22,3 +22,8 @@ bool oledPresent();
 void oledShowGame(const String &nodeName, Team owner, uint32_t redMs,
                   uint32_t blueMs, bool capturing, Team capturingTeam,
                   uint32_t captureElapsedMs);
+
+// Sleep/wake the panel (real display-off command — saves the panel from burn-in
+// and cuts power). No-ops if no panel is present.
+void oledSleep();
+void oledWake();

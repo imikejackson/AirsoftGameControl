@@ -38,3 +38,6 @@ void lcdShowGameMenu(const char *title, const char *const labels[], int count,
 // overlay (WiFi picker / game menu) so the game screen isn't left with stale
 // menu pixels (lcdShowGame otherwise only repaints changed fields).
 void lcdForceRepaint();
+
+// Blank the screen (sleep). The next lcdShowGame() after waking fully redraws.
+void lcdBlank();

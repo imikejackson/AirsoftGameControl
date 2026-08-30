@@ -59,6 +59,10 @@ int         networkLastPresetIndex();    // last-used preset (NVS), clamped to r
 // start the radio.
 void networkApplyPreset(int i);
 
+// Drop the current WiFi link and reconnect with the currently-configured
+// credentials. Used when the network is re-picked at runtime (config combo).
+void networkReconnect();
+
 // --- Runtime (re)provisioning ---------------------------------------------
 // Persist new values to NVS. Credential changes trigger an immediate
 // reconnect with the new SSID/password; the node ID change takes effect on

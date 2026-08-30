@@ -27,6 +27,11 @@
 // OTA. Default false = Connected (server-driven).
 static bool g_standalone = false;
 
+// Sleep + config-combo state.
+static unsigned long g_lastActivityMs = 0;  // last button/game activity
+static bool          g_asleep         = false;
+static unsigned long g_bothHeldSince  = 0;   // when both buttons became held (0 = no)
+
 // Publish the current game state as a retained JSON payload (small, hand-built
 // to avoid pulling ArduinoJson into main). Called on each ownership change.
 static void publishGameState() {
@@ -86,9 +91,11 @@ static void pollSerialCommands() {
 // If no button is pressed within WIFI_PICKER_TIMEOUT_MS the last-used network is
 // kept (returns -1 = "no change"), so an unattended power-cycle just reconnects.
 // Blocking is fine here: it runs in setup() before the radio/game come up.
-static int runWifiPicker() {
+// live = true when invoked at runtime (config combo): keep the network/MQTT/OTA
+// serviced while the menu blocks. At boot pass false (radio not up yet).
+static int runWifiPicker(bool live) {
   const int count = networkPresetCount();
-  if (count <= 1 || WIFI_PICKER_TIMEOUT_MS == 0) return -1;  // nothing to choose
+  if (count <= 1) return -1;  // nothing to choose
 
   const int n = (count > 8) ? 8 : count;
   const char *labels[8];
@@ -106,16 +113,19 @@ static int runWifiPicker() {
   bool lastRed  = buttonPressed(TEAM_RED);
   bool lastBlue = buttonPressed(TEAM_BLUE);
 
-  Serial.println("[wifi] boot picker: Red/Blue to choose network");
+  Serial.println("[wifi] picker: Red/Blue to choose network");
   const unsigned long start = millis();
+  bool interacted = false;  // first press freezes the auto-select countdown
   int chosen = -1;
   for (;;) {
+    if (live) { networkLoop(); otaLoop(); mqttLoop(); }
     buttonsLoop();
     const bool red  = buttonPressed(TEAM_RED);
     const bool blue = buttonPressed(TEAM_BLUE);
     const bool redEdge  = red  && !lastRed;
     const bool blueEdge = blue && !lastBlue;
     lastRed = red; lastBlue = blue;
+    if (redEdge || blueEdge) interacted = true;
 
     if (n == 2) {
       if (redEdge)  { chosen = 0; break; }
@@ -125,11 +135,14 @@ static int runWifiPicker() {
       if (blueEdge) { chosen = sel; break; }
     }
 
-    const unsigned long el = millis() - start;
-    if (el >= WIFI_PICKER_TIMEOUT_MS) { chosen = -1; break; }
-    const int secs = (int)((WIFI_PICKER_TIMEOUT_MS - el + 999) / 1000);
+    int secs = -1;  // frozen (no countdown) once the user has interacted
+    if (!interacted) {
+      const unsigned long el = millis() - start;
+      if (el >= WIFI_PICKER_TIMEOUT_MS) { chosen = -1; break; }
+      secs = (int)((WIFI_PICKER_TIMEOUT_MS - el + 999) / 1000);
+    }
     lcdShowWifiPicker(labels, ssids, n, sel, secs);
-    delay(15);  // gentle poll; setup context, nothing else running yet
+    delay(15);
   }
   Serial.printf("[wifi] picker result: %d\n", chosen);
   return chosen;
@@ -200,7 +213,7 @@ static void runLocalGameMenu() {
 // (server-driven); the rest are local standalone presets from kLocalGames.
 // Red cycles, Blue selects; on timeout it defaults to Connected. Returns 0 for
 // Connected or (preset index + 1) for a standalone game.
-static int runModePicker() {
+static int runModePicker(bool live) {
   const int games = (int)(sizeof(kLocalGames) / sizeof(kLocalGames[0]));
   const int count = games + 1;  // row 0 = Connected
   const int n = (count > 8) ? 8 : count;
@@ -217,29 +230,94 @@ static int runModePicker() {
   bool lastRed  = buttonPressed(TEAM_RED);
   bool lastBlue = buttonPressed(TEAM_BLUE);
 
-  Serial.println("[mode] boot picker: Connected vs local game");
+  Serial.println("[mode] picker: Connected vs local game");
   const unsigned long start = millis();
+  bool interacted = false;  // first press freezes the auto-select countdown
   int chosen = 0;  // timeout -> Connected
   for (;;) {
+    if (live) { networkLoop(); otaLoop(); mqttLoop(); }
     buttonsLoop();
     const bool red  = buttonPressed(TEAM_RED);
     const bool blue = buttonPressed(TEAM_BLUE);
     const bool redEdge  = red  && !lastRed;
     const bool blueEdge = blue && !lastBlue;
     lastRed = red; lastBlue = blue;
+    if (redEdge || blueEdge) interacted = true;
 
     if (redEdge)  sel = (sel + 1) % n;
     if (blueEdge) { chosen = sel; break; }
 
-    const unsigned long el = millis() - start;
-    if (el >= MODE_PICKER_TIMEOUT_MS) { chosen = 0; break; }
-    const int secs = (int)((MODE_PICKER_TIMEOUT_MS - el + 999) / 1000);
+    int secs = -1;  // frozen (no countdown) once the user has interacted
+    if (!interacted) {
+      const unsigned long el = millis() - start;
+      if (el >= MODE_PICKER_TIMEOUT_MS) { chosen = 0; break; }
+      secs = (int)((MODE_PICKER_TIMEOUT_MS - el + 999) / 1000);
+    }
     lcdShowGameMenu("SELECT MODE", labels, n, sel, secs);
     delay(15);
   }
   Serial.printf("[mode] result: %d (%s)\n", chosen,
                 chosen == 0 ? "connected" : "standalone");
   return chosen;
+}
+
+// Runtime config: the both-buttons combo re-runs the WiFi + mode menus without a
+// reboot, so a sealed box (no reset/power button) can be reconfigured in place.
+static void runRuntimeConfig() {
+  Serial.println("[cfg] config combo -> WiFi + mode menus");
+  const int wsel = runWifiPicker(/*live=*/true);
+  if (wsel >= 0) { networkApplyPreset(wsel); networkReconnect(); }
+
+  const int mode = runModePicker(/*live=*/true);
+  if (mode == 0) {
+    g_standalone = false;  // hand control back to the server
+    Serial.println("[mode] now Connected");
+  } else {
+    g_standalone = true;
+    gameStartLocal(kLocalGames[mode - 1].durationMs);
+  }
+  lcdForceRepaint();
+}
+
+// Both team buttons held COMBO_HOLD_MS opens the runtime config. Re-arms only
+// after both buttons are released, so it can't immediately re-fire.
+static void handleConfigCombo() {
+  static bool armed = true;
+  const bool red  = buttonPressed(TEAM_RED);
+  const bool blue = buttonPressed(TEAM_BLUE);
+  if (!(red && blue)) {
+    g_bothHeldSince = 0;
+    if (!red && !blue) armed = true;  // fully released -> ready to fire again
+    return;
+  }
+  if (!armed) return;
+  if (g_bothHeldSince == 0) {
+    g_bothHeldSince = millis();
+  } else if (millis() - g_bothHeldSince >= COMBO_HOLD_MS) {
+    g_bothHeldSince = 0;
+    armed = false;
+    runRuntimeConfig();
+    g_lastActivityMs = millis();
+  }
+}
+
+// Blank the displays + run the rainbow chase after idle; wake on activity. The
+// node stays awake whenever a game is running.
+static void updateSleep() {
+  if (gameRunning() || buttonPressed(TEAM_RED) || buttonPressed(TEAM_BLUE))
+    g_lastActivityMs = millis();
+  const bool wantSleep = (millis() - g_lastActivityMs) >= SLEEP_TIMEOUT_MS;
+  if (wantSleep && !g_asleep) {
+    g_asleep = true;
+    oledSleep();
+    lcdBlank();
+    Serial.println("[sleep] asleep -> rainbow");
+  } else if (!wantSleep && g_asleep) {
+    g_asleep = false;
+    oledWake();
+    lcdForceRepaint();
+    Serial.println("[sleep] awake");
+  }
 }
 
 void setup() {
@@ -257,7 +335,7 @@ void setup() {
 
   // Menu 1 — WiFi network (Red/Blue); keep the last-used one on timeout.
   {
-    const int sel = runWifiPicker();
+    const int sel = runWifiPicker(/*live=*/false);
     if (sel >= 0) networkApplyPreset(sel);
   }
 
@@ -266,7 +344,7 @@ void setup() {
   // Connected on timeout. Remember the chosen local duration to start below.
   int localDurationMs = -1;  // -1 = connected (no local game)
   {
-    const int mode = runModePicker();  // 0 = connected; >0 = local preset index
+    const int mode = runModePicker(/*live=*/false);  // 0 = connected; >0 = local
     if (mode > 0) {
       g_standalone    = true;
       localDurationMs = (int)kLocalGames[mode - 1].durationMs;
@@ -286,6 +364,8 @@ void setup() {
 
   // Standalone: start the chosen local game now that the game module is up.
   if (g_standalone) gameStartLocal((uint32_t)localDurationMs);
+
+  g_lastActivityMs = millis();  // don't sleep immediately after boot
 }
 
 // Drive the onboard RGB from the GAME state: solid owner color when held, the
@@ -315,33 +395,42 @@ void loop() {
   mqttLoop();           // drive MQTT connect/reconnect + service messages
   pollSerialCommands(); // runtime provisioning (wifi/nodeid/mqtt/...)
 
-  buttonsLoop();   // debounce + button edge events
-  gameLoop();      // capture countdown, ownership transfer, cumulative timers
+  buttonsLoop();       // debounce + button edge events
+  handleConfigCombo(); // both buttons held COMBO_HOLD_MS -> runtime config menus
 
-  // Reset button held -> open the on-device local game menu (standalone start).
+  gameLoop();          // capture countdown, ownership transfer, cumulative timers
+
+  // Reset button held -> open the local game menu (only if a reset button is
+  // wired; the config combo above is the button-only equivalent).
   if (gameConsumeMenuRequest()) runLocalGameMenu();
 
   // On a game-state change (capture, reset, or start/stop), report over MQTT.
   if (gameConsumeStateChanged()) publishGameState();
 
-  updateStatusLed();  // onboard RGB reflects ownership/capture
+  updateSleep();  // blank displays + rainbow after idle; wake on activity
 
-  // WS2812B ownership strip: solid team color when held, capturing-team
-  // progress-fill during the hold, dim idle glow when neutral.
-  ledsShow(gameOwner(), gameCaptureInProgress(), gameCapturingTeam(),
-           gameCaptureElapsedMs(), gameRunning());
+  if (g_asleep) {
+    ledsRainbow();  // sleep animation; displays stay blanked
+  } else {
+    updateStatusLed();  // onboard RGB reflects ownership/capture
 
-  // Live game displays. Both are driven (different buses): the OLED (I2C) and
-  // the ST7789 LCD (SPI). Each throttles itself and no-ops if not connected.
-  oledShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
-               gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
-               gameCapturingTeam(), gameCaptureElapsedMs());
-  const int32_t remainingS =
-      gameHasClock() ? (int32_t)(gameRemainingMs() / 1000) : -1;
-  lcdShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
-              gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
-              gameCapturingTeam(), gameCaptureElapsedMs(), wifiConnected(),
-              wifiIpString(), gameRunning(), remainingS);
+    // WS2812B ownership strip: solid team color when held, capturing-team
+    // progress-fill during the hold, dim idle glow when neutral.
+    ledsShow(gameOwner(), gameCaptureInProgress(), gameCapturingTeam(),
+             gameCaptureElapsedMs(), gameRunning());
+
+    // Live game displays on the OLED (I2C) and the ST7789 LCD (SPI). Each
+    // throttles itself and no-ops if not connected.
+    oledShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
+                 gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
+                 gameCapturingTeam(), gameCaptureElapsedMs());
+    const int32_t remainingS =
+        gameHasClock() ? (int32_t)(gameRemainingMs() / 1000) : -1;
+    lcdShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
+                gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
+                gameCapturingTeam(), gameCaptureElapsedMs(), wifiConnected(),
+                wifiIpString(), gameRunning(), remainingS);
+  }
 
   // Lightweight heartbeat to Serial so we can confirm the loop is alive and
   // watch connection state without blocking. Non-blocking millis() timer.

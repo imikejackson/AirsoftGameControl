@@ -20,3 +20,7 @@ void ledsShow(Team owner, bool capturing, Team capturingTeam,
 // drivers makes FastLED fail to bind the strip pin). statusled.cpp delegates
 // here. Safe to call after ledsSetup().
 void ledsSetStatus(uint8_t r, uint8_t g, uint8_t b);
+
+// Sleep animation: a scrolling rainbow chase across the whole strip. Call every
+// loop while the node is asleep (self-throttles). The power cap still applies.
+void ledsRainbow();
