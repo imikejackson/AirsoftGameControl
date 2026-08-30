@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #
-# deploy.sh — install the Airsoft dashboard on the Raspberry Pi.
+# deploy.sh — install the Airsoft broker + dashboard on the central server
+# (Raspberry Pi OS, or an Ubuntu/Debian host — apt-based).
 #
-# Run this ON THE PI (after copying the server/ folder over with scp — no git
-# required). It installs the Python deps from apt, drops app.py in place, and
-# registers a systemd service that starts on boot and restarts on failure.
+# Run this ON THE SERVER (after copying the server/ folder over with scp — no
+# git required). It installs the Mosquitto broker AND the Python deps, writes
+# the broker + dashboard config, and registers a systemd service that starts on
+# boot and restarts on failure.
 #
 set -euo pipefail
 
@@ -12,9 +14,20 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$HOME/airsoft-dashboard"
 RUN_USER="$(id -un)"
 
-echo "[deploy] installing dependencies (python3-flask, python3-paho-mqtt)..."
+echo "[deploy] installing dependencies (mosquitto, python3-flask, python3-paho-mqtt)..."
 sudo apt-get update -qq
-sudo apt-get install -y python3-flask python3-paho-mqtt
+sudo apt-get install -y mosquitto mosquitto-clients python3-flask python3-paho-mqtt
+
+echo "[deploy] configuring Mosquitto broker ..."
+# Mosquitto 2.x defaults to localhost-only + anonymous DENIED, so without this
+# the ESP32 nodes can't connect. The field LAN is a flat, trusted network, so
+# we listen on all interfaces and allow anonymous clients.
+sudo tee /etc/mosquitto/conf.d/airsoft.conf >/dev/null <<'MQTT'
+listener 1883
+allow_anonymous true
+MQTT
+sudo systemctl enable mosquitto
+sudo systemctl restart mosquitto
 
 echo "[deploy] installing app to $APP_DIR ..."
 mkdir -p "$APP_DIR"
