@@ -275,13 +275,36 @@ bool handleNetworkSerialCommand(const String &line) {
   if (line.startsWith("wifi ")) {
     String rest = line.substring(5);
     rest.trim();
-    int sp = rest.indexOf(' ');
-    if (sp < 0) {
+    // SSIDs routinely contain spaces ("MKAirsoft Middletown"), so splitting on
+    // the FIRST space silently truncates them — the node then hunts for a
+    // network that doesn't exist. Two accepted forms:
+    //   wifi "My Network" secretpass   quoted SSID; use this if the PASSWORD
+    //                                  itself contains spaces
+    //   wifi My Network secretpass     unquoted; split on the LAST space
+    String ssid, pass;
+    if (rest.startsWith("\"")) {
+      const int close = rest.indexOf('"', 1);
+      if (close < 0) {
+        Serial.println("[cfg] usage: wifi \"<ssid>\" <password>  (unclosed quote)");
+        return true;
+      }
+      ssid = rest.substring(1, close);
+      pass = rest.substring(close + 1);
+      pass.trim();
+    } else {
+      const int sp = rest.lastIndexOf(' ');
+      if (sp < 0) {
+        Serial.println("[cfg] usage: wifi <ssid> <password>");
+        return true;
+      }
+      ssid = rest.substring(0, sp);
+      pass = rest.substring(sp + 1);
+      ssid.trim();
+    }
+    if (ssid.length() == 0 || pass.length() == 0) {
       Serial.println("[cfg] usage: wifi <ssid> <password>");
       return true;
     }
-    String ssid = rest.substring(0, sp);
-    String pass = rest.substring(sp + 1);
     setWifiCredentials(ssid, pass);
     return true;
   } else if (line.startsWith("nodeid ")) {
