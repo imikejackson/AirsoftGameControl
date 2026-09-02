@@ -32,6 +32,13 @@ static unsigned long g_lastActivityMs = 0;  // last button/game activity
 static bool          g_asleep         = false;
 static unsigned long g_bothHeldSince  = 0;   // when both buttons became held (0 = no)
 
+// Rush role for this box, from the retained airsoft/<type>/<id>/rush topic:
+// "off" (not in Rush) | "pending" (locked, standby) | "active" (this bomb is
+// live) | "detonated" (locked, blown). pending/detonated lock out the buttons.
+static String g_rushStatus = "off";
+static const uint16_t COL_AMBER = 0xFD20;  // RGB565 amber (STAND BY)
+static const uint16_t COL_RED   = 0xF800;  // RGB565 red   (DETONATED)
+
 // Publish the current game state as a retained JSON payload (small, hand-built
 // to avoid pulling ArduinoJson into main). Called on each ownership change.
 static void publishGameState() {
@@ -47,6 +54,11 @@ static void publishGameState() {
 // node's, or airsoft/game/command) carry actions: reset / start / stop.
 static void onMqttCommand(const String &topic, const String &payload) {
   Serial.printf("[cmd] %s -> %s\n", topic.c_str(), payload.c_str());
+  if (topic.endsWith("/rush")) {   // per-node Rush role (retained)
+    g_rushStatus = payload;
+    gameSetLocked(g_rushStatus == "pending" || g_rushStatus == "detonated");
+    return;
+  }
   if (topic == "airsoft/game/state") {
     if (g_standalone) return;  // local game owns run state in standalone mode
     JsonDocument doc;
@@ -316,7 +328,8 @@ static void updateSleep() {
       gameOwner() != TEAM_NONE ||        // a team is holding the point
       gameCaptureInProgress() ||         // a capture is underway
       (gameRunning() && gameHasClock() && gameRemainingMs() > 0);  // clock ticking
-  if (gameActive || buttonPressed(TEAM_RED) || buttonPressed(TEAM_BLUE))
+  if (gameActive || g_rushStatus != "off" ||
+      buttonPressed(TEAM_RED) || buttonPressed(TEAM_BLUE))
     g_lastActivityMs = millis();
   const bool wantSleep = (millis() - g_lastActivityMs) >= SLEEP_TIMEOUT_MS;
   if (wantSleep && !g_asleep) {
@@ -421,8 +434,16 @@ void loop() {
 
   updateSleep();  // blank displays + rainbow after idle; wake on activity
 
+  const bool locked = (g_rushStatus == "pending" || g_rushStatus == "detonated");
   if (g_asleep) {
     ledsRainbow();  // sleep animation; displays stay blanked
+  } else if (locked) {
+    // Rush: this box is disabled — standby (pending) or blown (detonated).
+    const bool det = (g_rushStatus == "detonated");
+    ledsShowLocked(det);
+    lcdShowBanner(nodeLabel(), det ? "DETONATED" : "STAND BY",
+                  det ? "bomb down" : "not your turn",
+                  det ? COL_RED : COL_AMBER);
   } else {
     updateStatusLed();  // onboard RGB reflects ownership/capture
 

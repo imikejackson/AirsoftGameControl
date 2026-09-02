@@ -18,6 +18,7 @@ unsigned long g_captureStart  = 0;
 unsigned long g_captureLostMs = 0;         // when the button dropped mid-capture (0 = held)
 bool          g_stateChanged  = false;     // owner/timers/running changed -> republish
 bool          g_running       = true;      // round active? paused freezes everything
+bool          g_locked        = false;     // Rush: box disabled (ignores buttons)
 
 // Game countdown clock (server-driven via airsoft/game/state).
 bool          g_hasClock        = false;
@@ -98,14 +99,17 @@ void gameLoop() {
 
   // Local game-over fallback: if the countdown has run out, freeze. The server
   // normally ends the round, but this keeps it correct if the server drops.
-  if (g_running && g_hasClock &&
+  // Guard on g_setRemainingMs > 0 so a server-pushed "0 remaining but running"
+  // (Rush sudden death) does NOT self-terminate — the server drives that.
+  if (g_running && g_hasClock && g_setRemainingMs > 0 &&
       (uint32_t)(now - g_clockReceiptMs) >= g_setRemainingMs) {
     Serial.println("[game] countdown reached 0 -> game over");
     gameSetRunning(false);
   }
 
-  // Paused / over: freeze the game — no captures, no accrual (reset still works).
-  if (!g_running) {
+  // Paused / over / locked: no captures. (Locked = Rush disabled this box; the
+  // reset button and displays still work.)
+  if (!g_running || g_locked) {
     g_capturing = TEAM_NONE;
     return;
   }
@@ -187,6 +191,12 @@ void gameSetRunning(bool running) {
 
 bool gameCaptureInProgress() { return g_capturing != TEAM_NONE; }
 Team gameCapturingTeam()     { return g_capturing; }
+
+void gameSetLocked(bool locked) {
+  if (locked && !g_locked) g_capturing = TEAM_NONE;  // abort any in-progress capture
+  g_locked = locked;
+}
+bool gameLocked() { return g_locked; }
 
 uint32_t gameCaptureElapsedMs() {
   return (g_capturing == TEAM_NONE) ? 0 : (uint32_t)(millis() - g_captureStart);

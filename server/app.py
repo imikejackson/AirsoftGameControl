@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 
 SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
 
-DASH_VERSION = 6            # bump on every dashboard change; shown in the header
+DASH_VERSION = 7            # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -50,6 +50,7 @@ _nodes_lock = threading.Lock()
 _subs = []                  # list[queue.Queue] for SSE clients
 _subs_lock = threading.Lock()
 _client = None              # the paho client, for publishing
+_last_rush_pub = None       # dedup for the retained per-node rush status
 
 # Authoritative game clock + mode (this server owns it).
 #   mode      "domination" (KotH) | "rush"
@@ -182,6 +183,36 @@ def _rush_owner(active):
         return (n.get("owner") if n else None)
 
 
+def _publish_rush_status():
+    """Publish each box's retained Rush role (off/pending/active/detonated) so it
+    locks + shows the right thing. Only publishes when a role actually changes."""
+    global _last_rush_pub
+    with _game_lock:
+        r = _game.get("rush")
+        on = (_game["mode"] == "rush" and r is not None
+              and _game["running"] and r["result"] is None)
+        active = r["active"] if r else 0
+        det = list(r["detonated"]) if r else [False, False, False]
+    statuses = []
+    for i in range(3):
+        if not on:
+            statuses.append("off")            # not a live Rush round -> unlocked
+        elif det[i]:
+            statuses.append("detonated")
+        elif active == i + 1:
+            statuses.append("active")
+        else:
+            statuses.append("pending")
+    sig = tuple(statuses)
+    if sig == _last_rush_pub:
+        return
+    _last_rush_pub = sig
+    if _client is not None:
+        for (ntype, nid), st in zip(RUSH_ORDER, statuses):
+            _client.publish(f"airsoft/{ntype}/{nid}/rush", st, qos=1, retain=True)
+        print(f"[dash] rush status -> {statuses}")
+
+
 def _clock_loop():
     """Tick the countdown, run the Rush state machine, republish on change.
 
@@ -264,6 +295,7 @@ def _clock_loop():
         if cur != last_pub:
             last_pub = cur
             _publish_game()
+        _publish_rush_status()   # retained per-box lock/role (deduped internally)
 
 
 @app.route("/")

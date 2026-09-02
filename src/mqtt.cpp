@@ -30,6 +30,7 @@ String g_topicState;
 String g_topicCommand;
 String g_topicStatus;
 String g_topicHeartbeat;
+String g_topicRush;     // retained per-node Rush role: off/pending/active/detonated
 
 const char *kGameState   = "airsoft/game/state";
 const char *kGameCommand = "airsoft/game/command";
@@ -113,6 +114,7 @@ void attemptConnect() {
   g_client.publish(g_topicStatus.c_str(), "online", /*retained=*/true);
   publishStateSnapshot();
   g_client.subscribe(g_topicCommand.c_str(), 1);
+  g_client.subscribe(g_topicRush.c_str(), 1);
   g_client.subscribe(kGameCommand, 1);
   g_client.subscribe(kGameState, 1);
   g_lastHeartbeat = millis();
@@ -132,6 +134,7 @@ void mqttSetup() {
   g_topicCommand   = g_baseTopic + "/command";
   g_topicStatus    = g_baseTopic + "/status";
   g_topicHeartbeat = g_baseTopic + "/heartbeat";
+  g_topicRush      = g_baseTopic + "/rush";
 
   g_client.setServer(g_host.c_str(), g_port);
   g_client.setBufferSize(MQTT_BUFFER_SIZE);

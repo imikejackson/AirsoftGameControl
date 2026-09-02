@@ -75,6 +75,19 @@ void ledsRainbow() {
   FastLED.show();
 }
 
+void ledsShowLocked(bool detonated) {
+  if ((millis() - g_lastFrame) < FRAME_MS) return;
+  g_lastFrame = millis();
+  if (detonated) {
+    fill_solid(g_leds, NUM_LEDS, CRGB(70, 0, 0));   // solid dim red = blown
+  } else {
+    const uint8_t b = beatsin8(15, 6, 44);          // amber standby breathing
+    fill_solid(g_leds, NUM_LEDS, CRGB(b, (uint8_t)(b * 45 / 100), 0));
+  }
+  g_status[0] = CRGB::Black;
+  FastLED.show();
+}
+
 void ledsShow(Team owner, bool capturing, Team capturingTeam,
               uint32_t captureElapsedMs, bool running) {
   if ((millis() - g_lastFrame) < FRAME_MS) return;

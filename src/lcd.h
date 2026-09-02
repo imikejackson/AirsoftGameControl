@@ -41,3 +41,9 @@ void lcdForceRepaint();
 
 // Blank the screen (sleep). The next lcdShowGame() after waking fully redraws.
 void lcdBlank();
+
+// Full-screen status banner (Rush lock): node name, a big colored status word
+// (e.g. "STAND BY" / "DETONATED"), and a small subtitle. Only repaints on a
+// content change; the next lcdShowGame() fully redraws over it.
+void lcdShowBanner(const String &name, const char *big, const char *sub,
+                   uint16_t color);

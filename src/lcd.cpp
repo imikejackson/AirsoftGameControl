@@ -32,6 +32,7 @@ int           g_pickerSel  = -999;  // WiFi picker: last-rendered selection
 int           g_pickerSecs = -999;  // WiFi picker: last-rendered countdown secs
 int           g_menuSel    = -999;  // game menu: last-rendered selection
 int           g_menuSecs   = -999;  // game menu: last-rendered countdown secs
+String        g_bannerKey  = "";    // Rush lock banner: last-rendered content
 
 const int ROW_H    = 100;
 const int RED_Y    = 0;
@@ -169,10 +170,35 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
     }
   }
 
-  // A game screen was drawn; make the next picker/menu call full-repaint.
+  // A game screen was drawn; make the next picker/menu/banner call full-repaint.
   g_pickerSel = -999;
   g_menuSel   = -999;
   g_menuSecs  = -999;
+  g_bannerKey = "";
+}
+
+void lcdShowBanner(const String &name, const char *big, const char *sub,
+                   uint16_t color) {
+  const String key = name + "|" + big + "|" + sub;
+  if (key == g_bannerKey) return;  // only repaint when the banner changes
+  g_bannerKey = key;
+  lcdForceRepaint();               // game screen fully repaints when we leave
+
+  const int W = tft.width();
+  const int H = tft.height();
+  tft.fillScreen(TFT_BLACK);
+  String nm = name; nm.toUpperCase();
+  tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+  tft.setTextDatum(TC_DATUM);
+  tft.drawString(nm, W / 2, 16, 4);
+  // Big status word. Font 4 doubled — Font 6/7/8 are digits-only (clock fonts),
+  // so letters must use Font 2/4.
+  tft.setTextColor(color, TFT_BLACK);
+  tft.setTextSize(2);
+  tft.drawString(big, W / 2, H / 2 - 20, 4);
+  tft.setTextSize(1);
+  tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  tft.drawString(sub, W / 2, H - 34, 2);
 }
 
 void lcdShowWifiPicker(const char *const labels[], const char *const ssids[],

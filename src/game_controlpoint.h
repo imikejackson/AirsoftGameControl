@@ -33,6 +33,12 @@ uint32_t gameCaptureElapsedMs();
 bool gameRunning();
 void gameSetRunning(bool running);
 
+// Rush: lock/unlock this box. A locked box ignores its team buttons (no capture)
+// — used to disable the non-active bombs while another is active. The reset
+// button and displays keep working.
+void gameSetLocked(bool locked);
+bool gameLocked();
+
 // Game countdown clock, driven by the server via airsoft/game/state. The node
 // displays the remaining time and freezes itself if it reaches zero (a local
 // fallback so the round still ends if the server becomes unreachable).

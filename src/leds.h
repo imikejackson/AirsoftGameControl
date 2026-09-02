@@ -24,3 +24,7 @@ void ledsSetStatus(uint8_t r, uint8_t g, uint8_t b);
 // Sleep animation: a scrolling rainbow chase across the whole strip. Call every
 // loop while the node is asleep (self-throttles). The power cap still applies.
 void ledsRainbow();
+
+// Rush "locked" look: dim amber standby breathing for a pending bomb, or a
+// solid dim red for a detonated one. Call every loop while the box is locked.
+void ledsShowLocked(bool detonated);
