@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 
 SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
 
-DASH_VERSION = 5            # bump on every dashboard change; shown in the header
+DASH_VERSION = 6            # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -33,6 +33,16 @@ DEFAULT_DURATION_S = 15 * 60
 # display. A node_id not listed here falls back to showing its id.
 NODE_LABELS = {"alpha": "Pink Hallway", "bravo": "Kill House", "charlie": "Dark Room"}
 
+# --- Rush mode -------------------------------------------------------------
+# Bombs are armed in sequence across these boxes. Arm progress on the active
+# bomb = the attacking team's hold time on that box (paused while defenders hold
+# it). When a bomb detonates, the next box is reset so its clock starts fresh.
+RUSH_ORDER = [("controlpoint", "alpha"),    # bomb #1 = Pink Hallway
+              ("controlpoint", "bravo"),    # bomb #2 = Kill House
+              ("controlpoint", "charlie")]  # bomb #3 = Dark Room
+RUSH_FUSES = [60, 120, 180]   # bomb #1/#2/#3 fuse seconds (1/2/3 min)
+RUSH_DEFUSE_MAX = 5           # cap on the sudden-death defuse hold (s)
+
 app = Flask(__name__)
 
 _nodes = {}                 # "type/id" -> node dict
@@ -41,9 +51,16 @@ _subs = []                  # list[queue.Queue] for SSE clients
 _subs_lock = threading.Lock()
 _client = None              # the paho client, for publishing
 
-# Authoritative game clock (this server owns it).
+# Authoritative game clock + mode (this server owns it).
+#   mode      "domination" (KotH) | "rush"
+#   attacker  "red" | "blue"  — the arming team in Rush (referee-set)
+#   defuse_s  0..RUSH_DEFUSE_MAX — sudden-death defuse hold (referee-set)
+#   rush      runtime state dict while a Rush round is set up, else None:
+#             {active, detonated[3], arm_s, fuses[3], sudden_death,
+#              defuse_hold_s, _defuse_start, result}
 _game = {"running": False, "remaining_s": float(DEFAULT_DURATION_S),
-         "duration_s": DEFAULT_DURATION_S}
+         "duration_s": DEFAULT_DURATION_S, "mode": "domination",
+         "attacker": "red", "defuse_s": 0, "rush": None}
 _game_lock = threading.Lock()
 
 
@@ -59,9 +76,18 @@ def _broadcast(obj):
 
 def _game_payload():
     with _game_lock:
-        return {"kind": "game", "running": _game["running"],
-                "remaining_s": int(round(_game["remaining_s"])),
-                "duration_s": _game["duration_s"]}
+        p = {"kind": "game", "running": _game["running"],
+             "remaining_s": int(round(_game["remaining_s"])),
+             "duration_s": _game["duration_s"], "mode": _game["mode"],
+             "attacker": _game["attacker"], "defuse_s": _game["defuse_s"]}
+        r = _game.get("rush")
+        if r is not None:
+            p["rush"] = {"active": r["active"], "detonated": list(r["detonated"]),
+                         "arm_s": int(round(r["arm_s"])), "fuses": list(r["fuses"]),
+                         "sudden_death": r["sudden_death"],
+                         "defuse_hold_s": round(r["defuse_hold_s"], 1),
+                         "result": r["result"]}
+        return p
 
 
 def _publish_game():
@@ -71,7 +97,8 @@ def _publish_game():
         _client.publish("airsoft/game/state",
                         json.dumps({"running": p["running"],
                                     "remaining_s": p["remaining_s"],
-                                    "duration_s": p["duration_s"]}),
+                                    "duration_s": p["duration_s"],
+                                    "mode": p["mode"]}),
                         qos=1, retain=True)
     _broadcast(p)
 
@@ -81,7 +108,8 @@ def _touch(ntype, nid):
     n = _nodes.get(key)
     if n is None:
         n = {"type": ntype, "id": nid, "owner": "none", "red_s": 0,
-             "blue_s": 0, "status": "online", "rssi": None, "ip": None}
+             "blue_s": 0, "status": "online", "rssi": None, "ip": None,
+             "arrival": time.time()}
         _nodes[key] = n
     n["last_seen"] = time.time()
     return n
@@ -110,9 +138,14 @@ def _on_message(client, userdata, msg):
                 d = json.loads(payload)
             except ValueError:
                 d = {}
+            prev = (n.get("owner"), n.get("red_s"), n.get("blue_s"))
             for f in ("owner", "red_s", "blue_s", "ip", "rssi"):
                 if f in d:
                     n[f] = d[f]
+            # When owner/times change, restart the extrapolation clock (the Rush
+            # arm timer, like the UI, ticks base + elapsed-since-this-moment).
+            if (n.get("owner"), n.get("red_s"), n.get("blue_s")) != prev:
+                n["arrival"] = time.time()
             if kind == "state" and ("owner" in d or "red_s" in d):
                 n["updated"] = time.time()
             if kind == "heartbeat":
@@ -139,21 +172,95 @@ def _mqtt_loop():
             time.sleep(3)
 
 
+def _rush_owner(active):
+    """Current owner ('red'/'blue'/'none') of the active bomb's box, or None."""
+    if active < 1 or active > 3:
+        return None
+    ntype, nid = RUSH_ORDER[active - 1]
+    with _nodes_lock:
+        n = _nodes.get(f"{ntype}/{nid}")
+        return (n.get("owner") if n else None)
+
+
 def _clock_loop():
-    """Tick the countdown and republish on each whole-second change."""
+    """Tick the countdown, run the Rush state machine, republish on change.
+
+    Rush arm timer is accrued HERE (server-side) from box ownership: while the
+    active bomb's box is owned by the attacker the timer advances; a defender
+    holding it pauses the timer (attackers resume where they left off). This
+    avoids depending on the node's own cumulative timers or resets.
+    """
     last = time.time()
     last_pub = None
     while True:
         time.sleep(0.2)
         now = time.time()
         dt, last = now - last, now
+
         with _game_lock:
-            if _game["running"] and _game["remaining_s"] > 0:
-                _game["remaining_s"] = max(0.0, _game["remaining_s"] - dt)
-                if _game["remaining_s"] <= 0:
-                    _game["remaining_s"] = 0.0
-                    _game["running"] = False  # game over
-            cur = (int(round(_game["remaining_s"])), _game["running"])
+            g = _game
+            r = g.get("rush")
+
+            # 1) Countdown.
+            if g["running"] and g["remaining_s"] > 0:
+                g["remaining_s"] = max(0.0, g["remaining_s"] - dt)
+                if g["remaining_s"] <= 0:
+                    g["remaining_s"] = 0.0
+                    if (g["mode"] == "rush" and r is not None and r["result"] is None
+                            and r["active"] >= 3 and not r["detonated"][2]):
+                        r["sudden_death"] = True      # bomb-3 race; keep running
+                    else:
+                        g["running"] = False
+                        if g["mode"] == "rush" and r is not None and r["result"] is None:
+                            r["result"] = "defenders"  # held them off to time
+
+            attacker = g["attacker"]
+            defender = "blue" if attacker == "red" else "red"
+            mode, running = g["mode"], g["running"]
+            defuse_target = float(g["defuse_s"])
+            active = r["active"] if r else 0
+            sudden = r["sudden_death"] if r else False
+            rush_live = (mode == "rush" and r is not None and r["result"] is None)
+
+        # 2) Rush arm / detonation / sudden-death defuse.
+        if rush_live and 1 <= active <= 3:
+            owner = _rush_owner(active)
+            with _game_lock:
+                r = _game["rush"]
+                if r is not None and r["result"] is None and r["active"] == active:
+                    if (running or sudden) and owner == attacker:
+                        r["arm_s"] += dt                       # attackers arming
+                    if r["arm_s"] >= r["fuses"][active - 1]:    # boom
+                        r["detonated"][active - 1] = True
+                        if active >= 3:
+                            r["result"] = "attackers"
+                            _game["running"] = False
+                        else:
+                            r["active"] = active + 1
+                            r["arm_s"] = 0.0
+                            r["_defuse_start"] = None
+                    elif sudden and active == 3:               # defenders defuse
+                        if owner == defender:
+                            if r.get("_defuse_start") is None:
+                                r["_defuse_start"] = now
+                            r["defuse_hold_s"] = now - r["_defuse_start"]
+                            if r["defuse_hold_s"] >= defuse_target:
+                                r["result"] = "defenders"
+                                _game["running"] = False
+                        else:
+                            r["_defuse_start"] = None
+                            r["defuse_hold_s"] = 0.0
+
+        # 3) Publish on any meaningful change.
+        with _game_lock:
+            r = _game.get("rush")
+            cur = (int(round(_game["remaining_s"])), _game["running"], _game["mode"],
+                   (r["active"] if r else None),
+                   (int(round(r["arm_s"])) if r else None),
+                   (r["sudden_death"] if r else None),
+                   (r["result"] if r else None),
+                   (int(r["defuse_hold_s"]) if r else None),
+                   (tuple(r["detonated"]) if r else None))
         if cur != last_pub:
             last_pub = cur
             _publish_game()
@@ -226,6 +333,13 @@ def command():
                 _game["duration_s"] = max(1, int(mins * 60))
                 _game["remaining_s"] = float(_game["duration_s"])
                 _game["running"] = True
+                if _game["mode"] == "rush":
+                    _game["rush"] = {"active": 1, "detonated": [False, False, False],
+                                     "arm_s": 0.0, "fuses": list(RUSH_FUSES),
+                                     "sudden_death": False, "defuse_hold_s": 0.0,
+                                     "_defuse_start": None, "result": None}
+                else:
+                    _game["rush"] = None
             _client.publish("airsoft/game/command", "reset_all", qos=1, retain=False)
             _publish_game()
         elif action == "stop":           # freeze everything
@@ -238,6 +352,30 @@ def command():
                 _game["duration_s"] = max(1, int(mins * 60))
                 if not _game["running"]:
                     _game["remaining_s"] = float(_game["duration_s"])
+            _publish_game()
+        elif action == "setmode":        # domination | rush (only when idle)
+            m = body.get("mode", "domination")
+            if m not in ("domination", "rush"):
+                return jsonify(ok=False, error="bad mode"), 400
+            with _game_lock:
+                if not _game["running"]:
+                    _game["mode"] = m
+                    _game["rush"] = None
+            _publish_game()
+        elif action == "setattacker":    # rush: which team attacks
+            t = body.get("team", "red")
+            if t not in ("red", "blue"):
+                return jsonify(ok=False, error="bad team"), 400
+            with _game_lock:
+                _game["attacker"] = t
+            _publish_game()
+        elif action == "setdefuse":      # rush: sudden-death defuse hold (0..MAX)
+            try:
+                s = int(body.get("seconds", 0))
+            except (TypeError, ValueError):
+                s = 0
+            with _game_lock:
+                _game["defuse_s"] = max(0, min(RUSH_DEFUSE_MAX, s))
             _publish_game()
         else:
             return jsonify(ok=False, error="bad action"), 400
@@ -331,6 +469,31 @@ INDEX_HTML = r"""<!doctype html>
   #results .rtable td.lead { text-decoration:underline; text-underline-offset:4px; }
   #results .rwin { margin-top:12px; font-size:22px; font-weight:800; letter-spacing:.04em; }
   #results .rwin .ww-red { color:#ff6b6b; } #results .rwin .ww-blue { color:#6b9bff; }
+  /* Rush panel */
+  #rushpanel { display:none; margin:14px 18px 0; padding:16px 20px; border-radius:12px;
+        background:#15181d; border:1px solid #3a414c; }
+  .rushtop { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
+  .rushtop .phase { font-size:13px; letter-spacing:.16em; font-weight:800; color:#ffcf5c; }
+  .rushtop .sd { font-size:12px; letter-spacing:.14em; font-weight:800; color:#ff5c5c;
+        border:1px solid #ff5c5c; border-radius:6px; padding:3px 8px; display:none; }
+  .rushtop .rwin { margin-left:auto; font-size:20px; font-weight:800; letter-spacing:.03em; }
+  .rushtop .rwin .win-red { color:#ff6b6b; } .rushtop .rwin .win-blue { color:#6b9bff; }
+  .bombs { display:grid; gap:12px; grid-template-columns: repeat(3, 1fr); }
+  @media (max-width:640px){ .bombs { grid-template-columns:1fr; } }
+  .bomb { background:#12151a; border:1px solid #262b33; border-radius:10px; padding:12px 14px; }
+  .bomb .bh { display:flex; align-items:baseline; gap:8px; }
+  .bomb .bn { font-size:17px; font-weight:700; }
+  .bomb .bf { font-size:12px; color:#7d8794; margin-left:auto; font-variant-numeric:tabular-nums; }
+  .bomb .bs { font-size:11px; letter-spacing:.12em; font-weight:700; text-transform:uppercase;
+        margin-top:3px; color:#7d8794; }
+  .bomb.active .bs { color:#ffcf5c; } .bomb.done .bs { color:#ff5c5c; }
+  .bomb .bar { height:12px; border-radius:6px; background:#0d0f12; border:1px solid #2a2f37;
+        margin-top:10px; overflow:hidden; }
+  .bomb .fill { height:100%; width:0; background:#555; transition:width .2s linear; }
+  .bomb .fill.red { background:#c0212e; } .bomb .fill.blue { background:#1f4fd0; }
+  .bomb .arm { font-size:12px; color:#9aa4b0; margin-top:6px; font-variant-numeric:tabular-nums;
+        min-height:15px; }
+  .bomb.active { border-color:#ffcf5c55; } .bomb.done { border-color:#7a1d24; opacity:.9; }
 </style>
 </head>
 <body>
@@ -338,6 +501,22 @@ INDEX_HTML = r"""<!doctype html>
   <h1>AIRSOFT</h1>
   <span class="ver">dash v{{ ver }}</span>
   <span id="status">connecting…</span>
+  <select id="mode" class="sel" title="Game mode">
+    <option value="domination">Domination</option>
+    <option value="rush">Rush</option>
+  </select>
+  <span id="rushctl" class="ctl" style="display:none">
+    <label class="ctl">Attackers
+      <select id="attacker" class="sel">
+        <option value="red">Red</option><option value="blue">Blue</option>
+      </select></label>
+    <label class="ctl">Defuse
+      <select id="defuse" class="sel">
+        <option value="0">Instant</option><option value="1">1s</option>
+        <option value="2">2s</option><option value="3">3s</option>
+        <option value="4">4s</option><option value="5">5s</option>
+      </select></label>
+  </span>
   <span class="spacer"></span>
   <span id="clock" class="idle">--:--</span>
   <span class="ctl"><input id="minutes" type="number" min="1" max="120" value="15"> min</span>
@@ -356,6 +535,18 @@ INDEX_HTML = r"""<!doctype html>
     </tbody>
   </table>
   <div class="rwin"></div>
+</div>
+<div id="rushpanel">
+  <div class="rushtop">
+    <span class="phase"></span>
+    <span class="sd">SUDDEN DEATH</span>
+    <span class="rwin"></span>
+  </div>
+  <div class="bombs">
+    <div class="bomb" data-b="0"><div class="bh"><span class="bn">Pink Hallway</span><span class="bf">1:00</span></div><div class="bs"></div><div class="bar"><div class="fill"></div></div><div class="arm"></div></div>
+    <div class="bomb" data-b="1"><div class="bh"><span class="bn">Kill House</span><span class="bf">2:00</span></div><div class="bs"></div><div class="bar"><div class="fill"></div></div><div class="arm"></div></div>
+    <div class="bomb" data-b="2"><div class="bh"><span class="bn">Dark Room</span><span class="bf">3:00</span></div><div class="bs"></div><div class="bar"><div class="fill"></div></div><div class="arm"></div></div>
+  </div>
 </div>
 <div id="grid"><div class="empty">Waiting for nodes to report…</div></div>
 
@@ -490,9 +681,11 @@ function renderGame(){
   startStop.classList.toggle('go', !game.running);
   startStop.classList.toggle('danger', game.running);
   renderResults();
+  renderRush();
 }
 // End-of-game stats: aggregate held time + nodes held per team, and a winner.
 function renderResults(){
+  if (game.mode === 'rush'){ resultsEl.style.display = 'none'; return; }  // domination only
   const over = !game.running && game.remaining_s < game.duration_s;
   if (!over){ resultsEl.style.display = 'none'; return; }
   const {redT, blueT, redN, blueN} = gameStats();
@@ -509,6 +702,54 @@ function renderResults(){
   q('.rwin').innerHTML = win
       ? ('WINNER (held time): <span class="'+win[1]+'">'+win[0]+'</span>')
       : 'TIE on total held time';
+}
+// Rush scoreboard: 3 bombs in sequence, the active one's arm progress, sudden
+// death, and the winner. Driven entirely by the server's game.rush state.
+const rushEl = document.getElementById('rushpanel');
+function fmtms(sec){ sec = Math.max(0, Math.round(sec));
+  return Math.floor(sec/60) + ':' + String(sec%60).padStart(2,'0'); }
+function renderRush(){
+  if (game.mode !== 'rush'){ rushEl.style.display = 'none'; return; }
+  rushEl.style.display = 'block';
+  const r = game.rush;
+  const atk = game.attacker || 'red', def = atk === 'red' ? 'blue' : 'red';
+  const phase = rushEl.querySelector('.phase');
+  const sd = rushEl.querySelector('.sd');
+  const win = rushEl.querySelector('.rwin');
+  const bombs = rushEl.querySelectorAll('.bomb');
+  const fuses = (r && r.fuses) || [60,120,180];
+  bombs.forEach((b,i) => b.querySelector('.bf').textContent = fmtms(fuses[i]));
+  if (!r){
+    phase.textContent = 'RUSH — press Start (' + cap(atk) + ' attacking)';
+    sd.style.display = 'none'; win.textContent = '';
+    bombs.forEach(b => { b.className = 'bomb'; b.querySelector('.bs').textContent = 'PENDING';
+      const f = b.querySelector('.fill'); f.className = 'fill'; f.style.width = '0';
+      b.querySelector('.arm').textContent = ''; });
+    return;
+  }
+  sd.style.display = r.sudden_death ? 'inline-block' : 'none';
+  phase.textContent = r.result ? '' :
+      ('ATTACKERS: ' + cap(atk).toUpperCase() + '  •  BOMB ' + r.active + ' ACTIVE');
+  if (r.result === 'attackers')
+    win.innerHTML = '<span class="win-'+atk+'">'+cap(atk).toUpperCase()+' (ATTACKERS) WIN</span>';
+  else if (r.result === 'defenders')
+    win.innerHTML = '<span class="win-'+def+'">'+cap(def).toUpperCase()+' (DEFENDERS) WIN</span>';
+  else win.textContent = '';
+  bombs.forEach((b,i) => {
+    const num = i + 1, done = r.detonated[i], active = (r.active === num) && !r.result;
+    b.className = 'bomb' + (done ? ' done' : '') + (active ? ' active' : '');
+    b.querySelector('.bs').textContent = done ? 'DETONATED'
+        : (active ? (r.sudden_death && num === 3 ? 'SUDDEN DEATH' : 'ARMING') : 'PENDING');
+    const fill = b.querySelector('.fill');
+    fill.className = 'fill ' + ((active || done) ? atk : '');
+    fill.style.width = (done ? 100 : (active ? Math.min(100, r.arm_s/fuses[i]*100) : 0)).toFixed(1) + '%';
+    const arm = b.querySelector('.arm');
+    arm.textContent = active
+        ? (fmtms(r.arm_s) + ' / ' + fmtms(fuses[i])
+           + (r.sudden_death && num === 3 && game.defuse_s > 0
+              ? '   defuse ' + (r.defuse_hold_s||0).toFixed(1) + 's / ' + game.defuse_s + 's' : ''))
+        : '';
+  });
 }
 function ensureTile(key){
   let el = document.getElementById('tile-'+key);
@@ -567,6 +808,14 @@ startStop.onclick = () => {
   }
 };
 minutesEl.onchange = () => sendCmd({scope:'game', action:'settime', minutes: minutesEl.value});
+// Mode + Rush controls.
+const modeSel = document.getElementById('mode');
+const rushCtl = document.getElementById('rushctl');
+const attackerSel = document.getElementById('attacker');
+const defuseSel = document.getElementById('defuse');
+modeSel.onchange = () => sendCmd({scope:'game', action:'setmode', mode: modeSel.value});
+attackerSel.onchange = () => sendCmd({scope:'game', action:'setattacker', team: attackerSel.value});
+defuseSel.onchange = () => sendCmd({scope:'game', action:'setdefuse', seconds: defuseSel.value});
 
 const es = new EventSource('/events');
 es.onopen = () => statusEl.textContent = 'live';
@@ -574,15 +823,33 @@ es.onerror = () => statusEl.textContent = 'reconnecting…';
 es.onmessage = (e) => {
   const d = JSON.parse(e.data);
   if (d.kind === 'game') {
+    const prev = game;
+    // Sync the referee controls to the authoritative server state.
+    if (d.mode) modeSel.value = d.mode;
+    rushCtl.style.display = (d.mode === 'rush') ? 'inline-flex' : 'none';
+    if (d.attacker) attackerSel.value = d.attacker;
+    if (typeof d.defuse_s === 'number') defuseSel.value = String(d.defuse_s);
     if (audioOn) {
-      const mins = Math.round(d.duration_s/60);
-      if (!game.running && d.running) {
-        announce('start', 'Game on. ' + mins + (mins===1?' minute.':' minutes.'), 'blue');
-      } else if (game.running && !d.running && d.remaining_s === 0) {
-        const w = winnerText();
-        announce('over_' + (w.team||'tie'), 'Time! ' + w.say + '.', w.team||'red');
-      } else if (game.running && d.running && game.remaining_s > 60 && d.remaining_s <= 60) {
-        announce('one_minute', 'One minute remaining.', null);
+      if (d.mode === 'rush' && d.rush) {
+        const pr = prev.rush, nr = d.rush;
+        const atk = d.attacker||'red', def = atk === 'red' ? 'blue' : 'red';
+        if (pr) {
+          for (let i=0;i<3;i++)
+            if (nr.detonated[i] && !pr.detonated[i]) say('Bomb ' + (i+1) + ' detonated.');
+          if (nr.sudden_death && !pr.sudden_death) say('Sudden death. Bomb three is live.');
+          if (nr.result && !pr.result)
+            say(nr.result === 'attackers' ? cap(atk)+' attackers win.' : cap(def)+' defenders win.');
+        }
+      } else {
+        const mins = Math.round(d.duration_s/60);
+        if (!prev.running && d.running) {
+          announce('start', 'Game on. ' + mins + (mins===1?' minute.':' minutes.'), 'blue');
+        } else if (prev.running && !d.running && d.remaining_s === 0) {
+          const w = winnerText();
+          announce('over_' + (w.team||'tie'), 'Time! ' + w.say + '.', w.team||'red');
+        } else if (prev.running && d.running && prev.remaining_s > 60 && d.remaining_s <= 60) {
+          announce('one_minute', 'One minute remaining.', null);
+        }
       }
     }
     game = d; renderGame(); return;
