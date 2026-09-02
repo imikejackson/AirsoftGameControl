@@ -81,8 +81,9 @@ static void pollSerialCommands() {
                   (unsigned long)(gameCumulativeMs(TEAM_BLUE) / 1000));
     return;
   }
-  Serial.println("[cfg] commands: wifi <ssid> <pass> | nodeid <id> | netstatus "
-                 "| mqtt <host> <port> | mqttstatus | reset | score");
+  Serial.println("[cfg] commands: wifi <ssid> <pass> | presets | preset <n> "
+                 "| nodeid <id> | netstatus | mqtt <host> <port> | mqttstatus "
+                 "| reset | score");
 }
 
 // Boot-time WiFi network picker on the LCD. Shows the preset networks; the Red

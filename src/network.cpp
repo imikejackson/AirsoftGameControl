@@ -63,6 +63,32 @@ void loadConfig() {
   if (!prefs.isKey("wifi_ssid")) prefs.putString("wifi_ssid", g_ssid);
   if (!prefs.isKey("wifi_pass")) prefs.putString("wifi_pass", g_pass);
 
+  // Re-sync with the compiled-in presets. A node that last picked a preset
+  // (wifi_preset >= 0) keeps a COPY of that preset's ssid/pass in NVS. If
+  // secrets.h has since changed that slot (a network renamed or replaced), the
+  // copy points at a network the picker no longer offers, and the "keep
+  // last-used" timeout would leave the node stranded on it. Adopt the current
+  // preset instead. Credentials typed over Serial store wifi_preset = -1 and
+  // are left untouched.
+  {
+    int idx = prefs.getInt("wifi_preset", 0);
+    if (idx >= 0 && idx < kPresetCount &&
+        (g_ssid != kPresets[idx].ssid || g_pass != kPresets[idx].pass)) {
+      // Prefer whichever preset still carries the stored SSID (slots moved).
+      for (int i = 0; i < kPresetCount; i++) {
+        if (g_ssid == kPresets[i].ssid) { idx = i; break; }
+      }
+      Serial.printf("[wifi] stored creds \"%s\" out of sync with preset %d; "
+                    "adopting \"%s\"\n",
+                    g_ssid.c_str(), idx, kPresets[idx].ssid);
+      g_ssid = kPresets[idx].ssid;
+      g_pass = kPresets[idx].pass;
+      prefs.putString("wifi_ssid", g_ssid);
+      prefs.putString("wifi_pass", g_pass);
+      prefs.putInt("wifi_preset", idx);
+    }
+  }
+
   prefs.end();
 
   g_hostname = String(HOSTNAME_PREFIX) + "-" + NODE_TYPE_STR + "-" + g_nodeId;
@@ -254,6 +280,7 @@ void setWifiCredentials(const String &ssid, const String &password) {
   prefs.begin(NVS_NAMESPACE, /*readOnly=*/false);
   prefs.putString("wifi_ssid", g_ssid);
   prefs.putString("wifi_pass", g_pass);
+  prefs.putInt("wifi_preset", -1);  // custom creds: don't re-sync to a preset
   prefs.end();
 
   Serial.printf("[wifi] credentials updated; reconnecting to \"%s\"\n",
@@ -314,6 +341,25 @@ bool handleNetworkSerialCommand(const String &line) {
     return true;
   } else if (line == "netstatus") {
     Serial.printf("[net] %s\n", wifiStatusString().c_str());
+    return true;
+  } else if (line == "presets") {
+    const int last = networkLastPresetIndex();
+    for (int i = 0; i < kPresetCount; i++) {
+      Serial.printf("[cfg] preset %d: %-14s \"%s\"%s\n", i, kPresets[i].label,
+                    kPresets[i].ssid, (i == last) ? "  (current)" : "");
+    }
+    return true;
+  } else if (line.startsWith("preset ")) {
+    // Bench provisioning: pick a compiled-in network by index without touching
+    // the buttons/LCD. Same effect as choosing it in the boot picker.
+    const int i = line.substring(7).toInt();
+    if (i < 0 || i >= kPresetCount || !isDigit(line.charAt(7))) {
+      Serial.printf("[cfg] usage: preset <0..%d>  (see: presets)\n",
+                    kPresetCount - 1);
+      return true;
+    }
+    networkApplyPreset(i);
+    networkReconnect();
     return true;
   }
   return false;

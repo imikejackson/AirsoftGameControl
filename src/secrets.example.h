@@ -20,9 +20,11 @@
 // auto-connects to the last-used network. Each entry: { label, ssid, password }.
 // If you omit this, the firmware falls back to a single preset built from
 // DEFAULT_WIFI_SSID/PASS above.
+// The project's two networks are the Middletown field AP (first, Red button)
+// and "Ground Control" (second, Blue button).
 #define WIFI_PRESETS { \
-  { "Home",  DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS }, \
-  { "Field", "FIELD_AP_SSID",   "FIELD_AP_PASSWORD" }, \
+  { "Middletown",     DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS }, \
+  { "Ground Control", "Ground Control",  "GROUND_CONTROL_PASSWORD" }, \
 }
 
 // OTA update password. Empty string = no auth. Set a real password before
