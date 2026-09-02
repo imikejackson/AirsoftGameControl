@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 34
+#define FIRMWARE_VERSION 35
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -51,6 +51,16 @@
 #else
   #error "Unknown NODE_TYPE"
 #endif
+
+// Friendly display names per node_id, shown on the box's own LCD/OLED (the
+// dashboard maps these too). node_id stays alpha/bravo/charlie under the hood —
+// it's baked into the MQTT topics, hostname, and OTA address — so this is a
+// pure display label. A node_id not listed here just shows its id.
+#define NODE_LABELS { \
+  {"alpha",   "Pink Hallway"}, \
+  {"bravo",   "Kill House"},   \
+  {"charlie", "Dark Room"},    \
+}
 
 // ---------------------------------------------------------------------------
 // Network configuration

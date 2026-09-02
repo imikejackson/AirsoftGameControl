@@ -136,22 +136,21 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
   String key = name + "|" + cdBuf + "|" + line2;
   if (key != g_lastStatus) {
     tft.fillRect(0, STATUS_Y, W, 40, TFT_BLACK);
-    // Line 1.
+    // Line 1: box name on the left, countdown on the right (no center overlap,
+    // so long names like "PINK HALLWAY" have room).
     tft.setTextColor(TFT_WHITE, TFT_BLACK);
     tft.setTextDatum(TL_DATUM);
     tft.drawString(name, 6, STATUS_Y + 2, 2);
-    tft.setTextDatum(TR_DATUM);
-    tft.drawString("v" + String(FIRMWARE_VERSION), W - 6, STATUS_Y + 2, 2);
     uint16_t cdCol = over ? TFT_RED
                           : (!running ? TFT_YELLOW
                                       : (remainingS >= 0 && remainingS <= 10 ? TFT_RED : TFT_WHITE));
     tft.setTextColor(cdCol, TFT_BLACK);
-    tft.setTextDatum(TC_DATUM);
-    tft.drawString(cdBuf, W / 2, STATUS_Y + 2, 2);
-    // Line 2.
+    tft.setTextDatum(TR_DATUM);
+    tft.drawString(cdBuf, W - 6, STATUS_Y + 2, 2);
+    // Line 2: version + IP / status indicator.
     tft.setTextColor(running ? TFT_DARKGREY : (over ? TFT_RED : TFT_YELLOW), TFT_BLACK);
     tft.setTextDatum(TL_DATUM);
-    tft.drawString(line2, 6, STATUS_Y + 22, 1);
+    tft.drawString("v" + String(FIRMWARE_VERSION) + "  " + line2, 6, STATUS_Y + 22, 1);
     g_lastStatus = key;
     g_lastBarPct = -1;  // force bar repaint
   }

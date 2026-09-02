@@ -433,12 +433,12 @@ void loop() {
 
     // Live game displays on the OLED (I2C) and the ST7789 LCD (SPI). Each
     // throttles itself and no-ops if not connected.
-    oledShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
+    oledShowGame(nodeLabel(), gameOwner(), gameCumulativeMs(TEAM_RED),
                  gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
                  gameCapturingTeam(), gameCaptureElapsedMs());
     const int32_t remainingS =
         gameHasClock() ? (int32_t)(gameRemainingMs() / 1000) : -1;
-    lcdShowGame(nodeId(), gameOwner(), gameCumulativeMs(TEAM_RED),
+    lcdShowGame(nodeLabel(), gameOwner(), gameCumulativeMs(TEAM_RED),
                 gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
                 gameCapturingTeam(), gameCaptureElapsedMs(), wifiConnected(),
                 wifiIpString(), gameRunning(), remainingS);

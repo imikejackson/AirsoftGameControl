@@ -40,6 +40,11 @@ String wifiIpString();
 const String &nodeId();
 const char   *nodeTypeStr();
 
+// Friendly display name for this node (from the NODE_LABELS table in config.h,
+// e.g. "Kill House"); falls back to the node_id if not listed. Shown on the
+// box's LCD/OLED. node_id remains the identifier for topics/hostname/OTA.
+const String &nodeLabel();
+
 // The DHCP/mDNS hostname this node advertises, e.g.
 // "airsoft-controlpoint-alpha".
 const String &nodeHostname();

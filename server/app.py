@@ -21,12 +21,17 @@ import paho.mqtt.client as mqtt
 
 SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
 
-DASH_VERSION = 4            # bump on every dashboard change; shown in the header
+DASH_VERSION = 5            # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
 HTTP_PORT = 8080
 DEFAULT_DURATION_S = 15 * 60
+
+# Friendly display names per node_id (mirrors NODE_LABELS in the firmware's
+# config.h). node_id stays the identifier on the MQTT topics; this is just for
+# display. A node_id not listed here falls back to showing its id.
+NODE_LABELS = {"alpha": "Pink Hallway", "bravo": "Kill House", "charlie": "Dark Room"}
 
 app = Flask(__name__)
 
@@ -156,7 +161,8 @@ def _clock_loop():
 
 @app.route("/")
 def index():
-    resp = Response(render_template_string(INDEX_HTML, ver=DASH_VERSION))
+    resp = Response(render_template_string(INDEX_HTML, ver=DASH_VERSION,
+                                           labels=json.dumps(NODE_LABELS)))
     resp.headers["Cache-Control"] = "no-store"  # always serve the latest page
     return resp
 
@@ -363,6 +369,11 @@ const resultsEl = document.getElementById('results');
 const nodes = {};   // key -> {data, arrival, lastMsg, stale}
 let game = {running:false, remaining_s:0, duration_s:900};
 
+// Friendly box names (node_id -> label), injected from the server. Falls back
+// to the id for anything unlisted.
+const LABELS = {{ labels|safe }};
+function nodeName(id){ return LABELS[id] || (id||'?'); }
+
 // --- Audio announcements (browser TTS + Web Audio tones) ---
 let audioOn = false, audioCtx = null;
 const SUMMARY_MS = 45000;   // state-summary cadence (ms)
@@ -403,7 +414,7 @@ function winnerText(){ const s = gameStats();
 function summarize(){
   const red=[], blue=[], neu=[];
   for (const k in nodes){ const n = nodes[k]; if (n.stale) continue;
-    const id = n.data.id;
+    const id = nodeName(n.data.id);
     if (n.data.owner==='red') red.push(id);
     else if (n.data.owner==='blue') blue.push(id); else neu.push(id); }
   const total = red.length + blue.length + neu.length;
@@ -523,7 +534,7 @@ function render(){
     const el = ensureTile(key);
     el.dataset.type = n.data.type; el.dataset.id = n.data.id;
     el.classList.toggle('offline', n.stale);
-    el.querySelector('.name').textContent = (n.data.id||'?').toUpperCase();
+    el.querySelector('.name').textContent = nodeName(n.data.id);
     el.querySelector('.type').textContent = n.data.type||'';
     el.querySelector('.dot').className = 'dot ' + (n.stale ? 'off' : 'on');
     const rRow = el.querySelector('.row.red'), bRow = el.querySelector('.row.blue');
@@ -541,7 +552,7 @@ grid.addEventListener('click', (e) => {
   if (!e.target.classList.contains('reset')) return;
   const tile = e.target.closest('.tile');
   const id = tile.dataset.id, type = tile.dataset.type;
-  if (confirm('Reset ' + id.toUpperCase() + ' to neutral and zero its timers?'))
+  if (confirm('Reset ' + nodeName(id) + ' to neutral and zero its timers?'))
     sendCmd({scope:'node', type, id});
 });
 document.getElementById('resetAll').onclick = () => {
@@ -585,7 +596,7 @@ es.onmessage = (e) => {
                  arrival: changed ? Date.now() : prev.arrival };
   render();
   if (audioOn && prev && prevOwner !== d.owner && (d.owner === 'red' || d.owner === 'blue')) {
-    announce('cap_' + d.id + '_' + d.owner, cap(d.id) + ' taken by ' + cap(d.owner) + '.', d.owner);
+    announce('cap_' + d.id + '_' + d.owner, nodeName(d.id) + ' taken by ' + cap(d.owner) + '.', d.owner);
   }
 };
 // Audio enable toggle — the tap also unlocks browser audio for this device.

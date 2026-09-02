@@ -29,6 +29,14 @@ struct WifiPreset { const char *label; const char *ssid; const char *pass; };
 const WifiPreset kPresets[] = WIFI_PRESETS;
 const int        kPresetCount = (int)(sizeof(kPresets) / sizeof(kPresets[0]));
 
+// Friendly display names keyed by node_id (config.h). Falls back to the id.
+#ifndef NODE_LABELS
+#define NODE_LABELS { }
+#endif
+struct NodeLabel { const char *id; const char *label; };
+const NodeLabel kNodeLabels[] = NODE_LABELS;
+const int       kNodeLabelCount = (int)(sizeof(kNodeLabels) / sizeof(kNodeLabels[0]));
+
 enum NetState {
   NET_IDLE,        // not yet started / no usable credentials
   NET_CONNECTING,  // WiFi.begin() issued, waiting for result
@@ -39,6 +47,7 @@ enum NetState {
 Preferences prefs;
 
 String      g_nodeId;
+String      g_nodeLabel;
 String      g_hostname;
 String      g_ssid;
 String      g_pass;
@@ -92,6 +101,12 @@ void loadConfig() {
   prefs.end();
 
   g_hostname = String(HOSTNAME_PREFIX) + "-" + NODE_TYPE_STR + "-" + g_nodeId;
+
+  // Friendly display name: look up node_id in the label table, else use the id.
+  g_nodeLabel = g_nodeId;
+  for (int i = 0; i < kNodeLabelCount; i++) {
+    if (g_nodeId == kNodeLabels[i].id) { g_nodeLabel = kNodeLabels[i].label; break; }
+  }
 }
 
 bool credentialsLookValid() {
@@ -218,6 +233,7 @@ String wifiStatusString() {
 }
 
 const String &nodeId()       { return g_nodeId; }
+const String &nodeLabel()    { return g_nodeLabel; }
 const char   *nodeTypeStr()  { return NODE_TYPE_STR; }
 const String &nodeHostname() { return g_hostname; }
 const String &wifiSsid()     { return g_ssid; }
