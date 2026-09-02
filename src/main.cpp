@@ -302,10 +302,21 @@ static void handleConfigCombo() {
   }
 }
 
-// Blank the displays + run the rainbow chase after idle; wake on activity. The
-// node stays awake whenever a game is running.
+// Blank the displays + run the rainbow chase after idle; wake on activity.
+//
+// "Awake" is driven by a REAL game being in progress, not the bare running
+// flag: a Connected node defaults to running=true (and the dashboard may report
+// a running game with no round actually under way), so keying off gameRunning()
+// alone meant an idle connected node never slept. Instead we stay awake only
+// while the point is held, a capture is happening, or a countdown is actively
+// ticking. Otherwise — including a freshly booted Connected node that never
+// starts a round — it sleeps after SLEEP_TIMEOUT_MS, same as standalone.
 static void updateSleep() {
-  if (gameRunning() || buttonPressed(TEAM_RED) || buttonPressed(TEAM_BLUE))
+  const bool gameActive =
+      gameOwner() != TEAM_NONE ||        // a team is holding the point
+      gameCaptureInProgress() ||         // a capture is underway
+      (gameRunning() && gameHasClock() && gameRemainingMs() > 0);  // clock ticking
+  if (gameActive || buttonPressed(TEAM_RED) || buttonPressed(TEAM_BLUE))
     g_lastActivityMs = millis();
   const bool wantSleep = (millis() - g_lastActivityMs) >= SLEEP_TIMEOUT_MS;
   if (wantSleep && !g_asleep) {
