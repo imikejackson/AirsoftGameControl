@@ -451,7 +451,13 @@ void loop() {
   } else if (locked) {
     // Rush: this box is disabled — standby (pending) or blown (detonated).
     const bool det = (g_rushStatus == "detonated");
-    ledsShowLocked(det);
+    if (det) {
+      // Detonated: the attackers took it — run the normal comet chase in their
+      // color (a "captured" look) until the round ends.
+      ledsShow(g_rushAttacker, /*capturing=*/false, TEAM_NONE, 0, /*running=*/true);
+    } else {
+      ledsShowLocked(false);  // pending: amber standby
+    }
     lcdShowBanner(nodeLabel(), det ? "DETONATED" : "STAND BY",
                   det ? "bomb down" : "not your turn",
                   det ? COL_RED : COL_AMBER);
