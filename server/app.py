@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 
 SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
 
-DASH_VERSION = 7            # bump on every dashboard change; shown in the header
+DASH_VERSION = 8            # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -94,13 +94,16 @@ def _game_payload():
 def _publish_game():
     """Push the game clock to the broker (retained, authoritative) and the UI."""
     p = _game_payload()
+    node = {"running": p["running"], "remaining_s": p["remaining_s"],
+            "duration_s": p["duration_s"], "mode": p["mode"]}
+    r = p.get("rush")
+    if p["mode"] == "rush" and r is not None:
+        a = r["active"]
+        node["attacker"] = p["attacker"]        # which team is arming
+        node["arm_s"] = r["arm_s"]              # active bomb's arm progress (s)
+        node["fuse_s"] = r["fuses"][a - 1] if 1 <= a <= 3 else 0
     if _client is not None:
-        _client.publish("airsoft/game/state",
-                        json.dumps({"running": p["running"],
-                                    "remaining_s": p["remaining_s"],
-                                    "duration_s": p["duration_s"],
-                                    "mode": p["mode"]}),
-                        qos=1, retain=True)
+        _client.publish("airsoft/game/state", json.dumps(node), qos=1, retain=True)
     _broadcast(p)
 
 

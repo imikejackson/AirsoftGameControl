@@ -47,3 +47,9 @@ void lcdBlank();
 // content change; the next lcdShowGame() fully redraws over it.
 void lcdShowBanner(const String &name, const char *big, const char *sub,
                    uint16_t color);
+
+// Rush active-bomb screen: only the attacker's arm progress matters. Shows the
+// time until detonation (fuse - arm, both in seconds), a progress bar in the
+// attacker's color, and who currently holds the box. Repaints only on change.
+void lcdShowArm(const String &name, Team attacker, uint32_t armS, uint32_t fuseS,
+                Team holder);

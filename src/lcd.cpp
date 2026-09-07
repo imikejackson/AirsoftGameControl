@@ -33,6 +33,10 @@ int           g_pickerSecs = -999;  // WiFi picker: last-rendered countdown secs
 int           g_menuSel    = -999;  // game menu: last-rendered selection
 int           g_menuSecs   = -999;  // game menu: last-rendered countdown secs
 String        g_bannerKey  = "";    // Rush lock banner: last-rendered content
+int           g_armAttacker = -999; // Rush arm screen: last attacker (forces layout)
+int           g_armToDet    = -999; // Rush arm screen: last to-detonate seconds
+int           g_armPct       = -999; // Rush arm screen: last progress %
+int           g_armHolder    = -999; // Rush arm screen: last box holder
 
 const int ROW_H    = 100;
 const int RED_Y    = 0;
@@ -170,11 +174,12 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
     }
   }
 
-  // A game screen was drawn; make the next picker/menu/banner call full-repaint.
-  g_pickerSel = -999;
-  g_menuSel   = -999;
-  g_menuSecs  = -999;
-  g_bannerKey = "";
+  // A game screen was drawn; make the next picker/menu/banner/arm call repaint.
+  g_pickerSel  = -999;
+  g_menuSel    = -999;
+  g_menuSecs   = -999;
+  g_bannerKey  = "";
+  g_armAttacker = -999;
 }
 
 void lcdShowBanner(const String &name, const char *big, const char *sub,
@@ -182,6 +187,7 @@ void lcdShowBanner(const String &name, const char *big, const char *sub,
   const String key = name + "|" + big + "|" + sub;
   if (key == g_bannerKey) return;  // only repaint when the banner changes
   g_bannerKey = key;
+  g_armAttacker = -999;            // arm screen repaints if we switch to it
   lcdForceRepaint();               // game screen fully repaints when we leave
 
   const int W = tft.width();
@@ -199,6 +205,61 @@ void lcdShowBanner(const String &name, const char *big, const char *sub,
   tft.setTextSize(1);
   tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
   tft.drawString(sub, W / 2, H - 34, 2);
+}
+
+void lcdShowArm(const String &name, Team attacker, uint32_t armS, uint32_t fuseS,
+                Team holder) {
+  const int W = tft.width();
+  const int H = tft.height();
+  const uint16_t col = teamColor(attacker);
+  const uint32_t toDet = (armS < fuseS) ? (fuseS - armS) : 0;
+  const int pct = fuseS ? (int)((armS < fuseS ? armS : fuseS) * 100 / fuseS) : 0;
+
+  // Full layout on attacker change (color) or first entry.
+  if ((int)attacker != g_armAttacker) {
+    g_armAttacker = (int)attacker;
+    g_armToDet = g_armPct = g_armHolder = -999;
+    g_bannerKey = "";               // banner repaints if we switch to it
+    lcdForceRepaint();              // game screen repaints when we leave
+    tft.fillScreen(TFT_BLACK);
+    String nm = name; nm.toUpperCase();
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setTextDatum(TC_DATUM);
+    tft.drawString(nm, W / 2, 10, 4);
+    tft.setTextColor(TFT_DARKGREY, TFT_BLACK);
+    tft.drawString("DETONATES IN", W / 2, 50, 2);
+  }
+  // Big to-detonation timer (Font 6 has digits + ':').
+  if ((int)toDet != g_armToDet) {
+    g_armToDet = (int)toDet;
+    tft.fillRect(0, 72, W, 88, TFT_BLACK);
+    tft.setTextColor(col, TFT_BLACK);
+    tft.setTextDatum(MC_DATUM);
+    tft.setTextSize(2);
+    tft.drawString(fmtTime(toDet * 1000UL), W / 2, 116, 6);
+    tft.setTextSize(1);
+  }
+  // Progress bar toward detonation.
+  if (pct != g_armPct) {
+    g_armPct = pct;
+    const int by = 172, bh = 22, bx = 12, bw = W - 24;
+    tft.drawRect(bx, by, bw, bh, TFT_DARKGREY);
+    const int fw = (bw - 4) * pct / 100;
+    tft.fillRect(bx + 2, by + 2, fw, bh - 4, col);
+    tft.fillRect(bx + 2 + fw, by + 2, (bw - 4) - fw, bh - 4, TFT_BLACK);
+  }
+  // Who's on the box now.
+  if ((int)holder != g_armHolder) {
+    g_armHolder = (int)holder;
+    tft.fillRect(0, H - 30, W, 30, TFT_BLACK);
+    tft.setTextDatum(TC_DATUM);
+    const char *msg; uint16_t hc;
+    if (holder == attacker)        { msg = "ARMING…";           hc = col; }
+    else if (holder == TEAM_NONE)  { msg = "uncontested";       hc = TFT_DARKGREY; }
+    else                           { msg = "DEFENDERS HOLDING"; hc = TFT_YELLOW; }
+    tft.setTextColor(hc, TFT_BLACK);
+    tft.drawString(msg, W / 2, H - 24, 2);
+  }
 }
 
 void lcdShowWifiPicker(const char *const labels[], const char *const ssids[],

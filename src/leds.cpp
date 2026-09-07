@@ -88,6 +88,20 @@ void ledsShowLocked(bool detonated) {
   FastLED.show();
 }
 
+void ledsShowArm(uint8_t pct, Team attacker) {
+  if ((millis() - g_lastFrame) < FRAME_MS) return;
+  g_lastFrame = millis();
+  if (pct > 100) pct = 100;
+  CRGB c = teamColor(attacker);
+  if (c == CRGB(0, 0, 0)) c = CRGB(160, 90, 0);   // fallback amber if unknown
+  CRGB base = c;
+  base.nscale8_video(28);                          // dim attacker base
+  const int lit = (int)((long)NUM_LEDS * pct / 100);
+  for (int i = 0; i < NUM_LEDS; i++) g_leds[i] = (i < lit) ? c : base;
+  g_status[0] = c;                                 // onboard pixel = attacker color
+  FastLED.show();
+}
+
 void ledsShow(Team owner, bool capturing, Team capturingTeam,
               uint32_t captureElapsedMs, bool running) {
   if ((millis() - g_lastFrame) < FRAME_MS) return;

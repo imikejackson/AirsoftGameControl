@@ -28,3 +28,7 @@ void ledsRainbow();
 // Rush "locked" look: dim amber standby breathing for a pending bomb, or a
 // solid dim red for a detonated one. Call every loop while the box is locked.
 void ledsShowLocked(bool detonated);
+
+// Rush active-bomb look: a progress fill (pct 0-100) toward detonation in the
+// attacking team's color over a dim base. Call every loop on the active box.
+void ledsShowArm(uint8_t pct, Team attacker);

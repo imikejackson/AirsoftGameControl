@@ -38,6 +38,11 @@ static unsigned long g_bothHeldSince  = 0;   // when both buttons became held (0
 static String g_rushStatus = "off";
 static const uint16_t COL_AMBER = 0xFD20;  // RGB565 amber (STAND BY)
 static const uint16_t COL_RED   = 0xF800;  // RGB565 red   (DETONATED)
+// Active-bomb arm state (from airsoft/game/state during Rush): who's arming, and
+// the active bomb's arm progress toward its fuse (seconds).
+static Team     g_rushAttacker = TEAM_NONE;
+static uint32_t g_rushArmS     = 0;
+static uint32_t g_rushFuseS    = 0;
 
 // Publish the current game state as a retained JSON payload (small, hand-built
 // to avoid pulling ArduinoJson into main). Called on each ownership change.
@@ -66,6 +71,11 @@ static void onMqttCommand(const String &topic, const String &payload) {
     long rem = doc["remaining_s"] | -1L;
     if (rem >= 0) gameSetCountdown((uint32_t)rem * 1000UL);
     gameSetRunning(doc["running"] | false);
+    // Rush arm state for the active box's display (absent in Domination).
+    const String atk = doc["attacker"] | "";
+    g_rushAttacker = (atk == "red") ? TEAM_RED : (atk == "blue") ? TEAM_BLUE : TEAM_NONE;
+    g_rushArmS  = doc["arm_s"]  | 0;
+    g_rushFuseS = doc["fuse_s"] | 0;
     return;
   }
   if (payload.indexOf("reset") >= 0) gameReset();
@@ -324,10 +334,11 @@ static void handleConfigCombo() {
 // ticking. Otherwise — including a freshly booted Connected node that never
 // starts a round — it sleeps after SLEEP_TIMEOUT_MS, same as standalone.
 static void updateSleep() {
-  const bool gameActive =
-      gameOwner() != TEAM_NONE ||        // a team is holding the point
-      gameCaptureInProgress() ||         // a capture is underway
-      (gameRunning() && gameHasClock() && gameRemainingMs() > 0);  // clock ticking
+  // Only "active" while a round is actually RUNNING — otherwise a box left owned
+  // at game-over would never sleep (it would sit on the winner's color forever).
+  const bool gameActive = gameRunning() &&
+      (gameCaptureInProgress() || gameOwner() != TEAM_NONE ||
+       (gameHasClock() && gameRemainingMs() > 0));
   if (gameActive || g_rushStatus != "off" ||
       buttonPressed(TEAM_RED) || buttonPressed(TEAM_BLUE))
     g_lastActivityMs = millis();
@@ -444,6 +455,13 @@ void loop() {
     lcdShowBanner(nodeLabel(), det ? "DETONATED" : "STAND BY",
                   det ? "bomb down" : "not your turn",
                   det ? COL_RED : COL_AMBER);
+  } else if (g_rushStatus == "active") {
+    // Rush: this is the live bomb — show only the attacker's arm progress.
+    const uint32_t fuse = g_rushFuseS ? g_rushFuseS : 1;
+    const uint8_t pct =
+        (g_rushArmS >= fuse) ? 100 : (uint8_t)(g_rushArmS * 100 / fuse);
+    ledsShowArm(pct, g_rushAttacker);
+    lcdShowArm(nodeLabel(), g_rushAttacker, g_rushArmS, g_rushFuseS, gameOwner());
   } else {
     updateStatusLed();  // onboard RGB reflects ownership/capture
 
