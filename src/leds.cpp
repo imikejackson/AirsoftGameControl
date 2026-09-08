@@ -81,8 +81,8 @@ void ledsShowLocked(bool detonated) {
   if (detonated) {
     fill_solid(g_leds, NUM_LEDS, CRGB(70, 0, 0));   // solid dim red = blown
   } else {
-    const uint8_t b = beatsin8(15, 6, 44);          // amber standby breathing
-    fill_solid(g_leds, NUM_LEDS, CRGB(b, (uint8_t)(b * 45 / 100), 0));
+    const uint8_t b = beatsin8(30, 20, 120);        // white standby breathing (~2x speed)
+    fill_solid(g_leds, NUM_LEDS, CRGB(b, b, b));
   }
   g_status[0] = CRGB::Black;
   FastLED.show();
