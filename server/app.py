@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 
 SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
 
-DASH_VERSION = 8            # bump on every dashboard change; shown in the header
+DASH_VERSION = 9            # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -441,9 +441,12 @@ INDEX_HTML = r"""<!doctype html>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
   body { margin:0; font-family: system-ui, sans-serif; background:#0d0f12; color:#e8e8e8; }
-  header { padding:12px 18px; background:#15181d; border-bottom:1px solid #262b33;
-           display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
-  header h1 { font-size:18px; margin:0; font-weight:600; letter-spacing:.04em; }
+  header { background:#15181d; border-bottom:1px solid #262b33; }
+  .bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 16px; }
+  .bar-mode { border-top:1px solid #21262e; background:#12151a; }
+  header h1 { font-size:18px; margin:0; font-weight:700; letter-spacing:.04em; }
+  .modehint { font-size:13px; color:#7d8794; letter-spacing:.02em; }
+  .bar-mode label.ctl { font-size:14px; color:#cdd3da; }
   #status { font-size:13px; color:#7d8794; }
   .ver { font-size:11px; color:#7d8794; letter-spacing:.05em; }
   .spacer { margin-left:auto; }
@@ -452,13 +455,16 @@ INDEX_HTML = r"""<!doctype html>
   #clock.low { color:#ff5c5c; } #clock.over { color:#ff5c5c; }
   #clock.idle { color:#7d8794; }
   .ctl { display:flex; align-items:center; gap:8px; }
-  input#minutes { width:56px; font:inherit; font-size:14px; text-align:center;
-        background:#0d0f12; color:#e8e8e8; border:1px solid #3a414c; border-radius:6px; padding:5px; }
-  select.sel { font:inherit; font-size:13px; background:#0d0f12; color:#e8e8e8;
-        border:1px solid #3a414c; border-radius:8px; padding:6px 8px; }
-  button.btn { font:inherit; font-size:13px; font-weight:600; color:#e8e8e8;
-        background:#2a2f37; border:1px solid #3a414c; border-radius:8px;
-        padding:7px 12px; cursor:pointer; }
+  /* Touch-friendly controls (referees are usually on a phone): >=44px targets,
+     16px text so iOS doesn't zoom on focus. */
+  input#minutes { width:70px; font:inherit; font-size:16px; text-align:center; min-height:46px;
+        background:#0d0f12; color:#e8e8e8; border:1px solid #3a414c; border-radius:9px; padding:8px; }
+  select.sel { font:inherit; font-size:16px; min-height:46px; background:#0d0f12; color:#e8e8e8;
+        border:1px solid #3a414c; border-radius:9px; padding:8px 12px; }
+  button.btn { font:inherit; font-size:16px; font-weight:600; color:#e8e8e8; min-height:46px;
+        background:#2a2f37; border:1px solid #3a414c; border-radius:9px;
+        padding:10px 18px; cursor:pointer; }
+  label.ctl { display:inline-flex; align-items:center; gap:8px; }
   button.btn:hover { background:#343a44; }
   button.btn.go { background:#1d6f33; border-color:#2a9648; }
   button.btn.go:hover { background:#23843d; }
@@ -533,32 +539,40 @@ INDEX_HTML = r"""<!doctype html>
 </head>
 <body>
 <header>
-  <h1>AIRSOFT</h1>
-  <span class="ver">dash v{{ ver }}</span>
-  <span id="status">connecting…</span>
-  <select id="mode" class="sel" title="Game mode">
-    <option value="domination">Domination</option>
-    <option value="rush">Rush</option>
-  </select>
-  <span id="rushctl" class="ctl" style="display:none">
-    <label class="ctl">Attackers
-      <select id="attacker" class="sel">
-        <option value="red">Red</option><option value="blue">Blue</option>
+  <!-- Row 1: primary game controls -->
+  <div class="bar bar-primary">
+    <h1>AIRSOFT</h1>
+    <span class="ver">dash v{{ ver }}</span>
+    <span id="status">connecting…</span>
+    <span class="spacer"></span>
+    <span id="clock" class="idle">--:--</span>
+    <label class="ctl">Mode
+      <select id="mode" class="sel" title="Game mode">
+        <option value="domination">Domination</option>
+        <option value="rush">Rush</option>
       </select></label>
-    <label class="ctl">Defuse
-      <select id="defuse" class="sel">
-        <option value="0">Instant</option><option value="1">1s</option>
-        <option value="2">2s</option><option value="3">3s</option>
-        <option value="4">4s</option><option value="5">5s</option>
-      </select></label>
-  </span>
-  <span class="spacer"></span>
-  <span id="clock" class="idle">--:--</span>
-  <span class="ctl"><input id="minutes" type="number" min="1" max="120" value="15"> min</span>
-  <button class="btn go" id="startStop">Start</button>
-  <button class="btn danger" id="resetAll">Reset All</button>
-  <select id="pack" class="sel" title="Voice pack"><option value="">Browser voice</option></select>
-  <button class="btn" id="audioBtn">🔇 Audio</button>
+    <label class="ctl"><input id="minutes" type="number" min="1" max="120" value="15"> min</label>
+    <button class="btn go" id="startStop">Start</button>
+    <button class="btn danger" id="resetAll">Reset All</button>
+    <select id="pack" class="sel" title="Voice pack"><option value="">Browser voice</option></select>
+    <button class="btn" id="audioBtn">🔇 Audio</button>
+  </div>
+  <!-- Row 2: options for the selected game type -->
+  <div class="bar bar-mode">
+    <span id="rushctl" class="ctl" style="display:none">
+      <label class="ctl">Attackers
+        <select id="attacker" class="sel">
+          <option value="red">Red</option><option value="blue">Blue</option>
+        </select></label>
+      <label class="ctl">Defuse
+        <select id="defuse" class="sel">
+          <option value="0">Instant</option><option value="1">1s</option>
+          <option value="2">2s</option><option value="3">3s</option>
+          <option value="4">4s</option><option value="5">5s</option>
+        </select></label>
+    </span>
+    <span id="domhint" class="modehint">King-of-the-Hill — hold the points; most cumulative time wins.</span>
+  </div>
 </header>
 <div id="results">
   <div class="rtitle"></div>
@@ -846,6 +860,7 @@ minutesEl.onchange = () => sendCmd({scope:'game', action:'settime', minutes: min
 // Mode + Rush controls.
 const modeSel = document.getElementById('mode');
 const rushCtl = document.getElementById('rushctl');
+const domHint = document.getElementById('domhint');
 const attackerSel = document.getElementById('attacker');
 const defuseSel = document.getElementById('defuse');
 modeSel.onchange = () => sendCmd({scope:'game', action:'setmode', mode: modeSel.value});
@@ -861,7 +876,9 @@ es.onmessage = (e) => {
     const prev = game;
     // Sync the referee controls to the authoritative server state.
     if (d.mode) modeSel.value = d.mode;
-    rushCtl.style.display = (d.mode === 'rush') ? 'inline-flex' : 'none';
+    const isRush = (d.mode === 'rush');
+    rushCtl.style.display = isRush ? 'inline-flex' : 'none';
+    domHint.style.display = isRush ? 'none' : 'inline';
     if (d.attacker) attackerSel.value = d.attacker;
     if (typeof d.defuse_s === 'number') defuseSel.value = String(d.defuse_s);
     if (audioOn) {
