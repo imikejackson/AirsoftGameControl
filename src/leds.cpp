@@ -89,17 +89,19 @@ void ledsShowLocked(bool detonated) {
 }
 
 void ledsShowArm(uint8_t pct, Team attacker) {
-  (void)attacker;  // color now signals urgency (green -> red), not team
   if ((millis() - g_lastFrame) < FRAME_MS) return;
   g_lastFrame = millis();
   if (pct > 100) pct = 100;
-  // Whole strip lit: the armed portion is RED and grows toward detonation, the
-  // remaining time ahead of it stays GREEN. All green at 0%, all red at 100%.
+  // Whole strip lit: the armed portion grows toward detonation in the ATTACKING
+  // team's color, the time still remaining stays GREEN. All green at 0%, all
+  // attacker-color at 100%.
+  CRGB armedC = teamColor(attacker);
+  if (armedC == CRGB(0, 0, 0)) armedC = CRGB(255, 0, 0);  // fallback if unknown
+  armedC.nscale8_video(150);                              // tame the brightness
+  const CRGB kSafe(0, 110, 0);                            // green = time remaining
   const int armed = (int)((long)NUM_LEDS * pct / 100);
-  const CRGB kArmed(150, 0, 0);   // red  = armed / danger
-  const CRGB kSafe(0, 110, 0);    // green = time remaining
-  for (int i = 0; i < NUM_LEDS; i++) g_leds[i] = (i < armed) ? kArmed : kSafe;
-  g_status[0] = (pct >= 50) ? kArmed : kSafe;  // onboard pixel tracks the leading zone
+  for (int i = 0; i < NUM_LEDS; i++) g_leds[i] = (i < armed) ? armedC : kSafe;
+  g_status[0] = (pct >= 50) ? armedC : kSafe;  // onboard pixel tracks the leading zone
   FastLED.show();
 }
 
