@@ -12,19 +12,19 @@
 // recompiling — handy once nodes are sealed in enclosures.
 //
 
-#define DEFAULT_WIFI_SSID  "YOUR_FIELD_SSID"
-#define DEFAULT_WIFI_PASS  "YOUR_WIFI_PASSWORD"
+#define DEFAULT_WIFI_SSID  "Ground Control"
+#define DEFAULT_WIFI_PASS  "YOUR_HOME_PASSWORD"
 
 // Preset WiFi networks for the on-device LCD picker (first = default). On boot
 // the LCD lists these and the Red/Blue buttons pick one; after a timeout it
 // auto-connects to the last-used network. Each entry: { label, ssid, password }.
-// If you omit this, the firmware falls back to a single preset built from
-// DEFAULT_WIFI_SSID/PASS above.
-// The project's two networks are the Middletown field AP (first, Red button)
-// and "Ground Control" (second, Blue button).
+// The project's two networks: slot 0 = "Ground Control" (home, RED button),
+// slot 1 = the "MKAirsoft Middletown" field AP (FIELD, BLUE button). Fill in the
+// real passwords in your local secrets.h (this template keeps them as
+// placeholders so passwords never land in git).
 #define WIFI_PRESETS { \
-  { "Middletown",     DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS }, \
-  { "Ground Control", "Ground Control",  "GROUND_CONTROL_PASSWORD" }, \
+  { "Home",  DEFAULT_WIFI_SSID,       DEFAULT_WIFI_PASS }, \
+  { "Field", "MKAirsoft Middletown",  "YOUR_FIELD_PASSWORD" }, \
 }
 
 // OTA update password. Empty string = no auth. Set a real password before
