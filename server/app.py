@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 
 SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
 
-DASH_VERSION = 9            # bump on every dashboard change; shown in the header
+DASH_VERSION = 10           # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -442,7 +442,7 @@ INDEX_HTML = r"""<!doctype html>
   * { box-sizing: border-box; }
   body { margin:0; font-family: system-ui, sans-serif; background:#0d0f12; color:#e8e8e8; }
   header { background:#15181d; border-bottom:1px solid #262b33; }
-  .bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 16px; }
+  header .bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 16px; }
   .bar-mode { border-top:1px solid #21262e; background:#12151a; }
   header h1 { font-size:18px; margin:0; font-weight:700; letter-spacing:.04em; }
   .modehint { font-size:13px; color:#7d8794; letter-spacing:.02em; }
