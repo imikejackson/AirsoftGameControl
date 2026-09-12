@@ -11,9 +11,9 @@ _Last updated: 2026-08-29._
 
 ## 1. Where the project is right now
 
-- **Firmware: v25** (`FIRMWARE_VERSION` in [src/config.h](src/config.h)). Deployed to all
+- **Firmware: v43** (`FIRMWARE_VERSION` in [src/config.h](src/config.h)). Deployed to all
   three control points over OTA.
-- **Dashboard: DASH_VERSION 4** ([server/app.py](server/app.py)).
+- **Dashboard: DASH_VERSION 11** ([server/app.py](server/app.py)).
 - **3 control points built and deployed in final enclosures**, powered from a 5 V / 5 A
   supply (no USB in the box), reachable only over WiFi/OTA:
   - `alpha`, `bravo`, `charlie` — hostnames `airsoft-controlpoint-<name>.local`.
@@ -46,9 +46,10 @@ must be re-established on any new computer:**
    ```
    cp src/secrets.example.h src/secrets.h
    ```
-   It defines `DEFAULT_WIFI_SSID`, `DEFAULT_WIFI_PASS`, `OTA_PASSWORD`. The field WiFi SSID
-   in use is **"Ground Control"** (ask the user for the password — it is deliberately not in
-   git). These only *seed* NVS on first boot; deployed nodes hold their creds in NVS.
+   It defines `DEFAULT_WIFI_SSID`, `DEFAULT_WIFI_PASS`, `OTA_PASSWORD`. The two presets are
+   **"MKAirsoft Middletown"** (Field, **RED**, slot 0) and **"Ground Control"** (home/dev,
+   **BLUE**, slot 1); passwords live only in the gitignored `secrets.h`. These only *seed* NVS
+   on first boot; deployed nodes hold their creds in NVS.
 
 2. **OTA callback IP is hardcoded to the OLD PC.** [platformio.ini](platformio.ini) `env:esp32dev_ota`
    sets `upload_flags = --host_ip=192.168.88.201`. **Change this to the new PC's IP on the
@@ -85,8 +86,9 @@ must be re-established on any new computer:**
 - **Node IPs are DHCP and DO move** (they've been on .36/.37/.39, then .49/.50/.52). **Always
   target `.local` hostnames, not hardcoded IPs.** (Optional: set DHCP reservations by MAC.)
 - MQTT topic schema, node types, and IDs are documented in [CLAUDE.md](CLAUDE.md).
-- WiFi SSID currently **"Ground Control"** (the user's home network — see backlog item on
-  field WiFi).
+- The two WiFi presets are **"MKAirsoft Middletown"** (Field, **RED**, slot 0) and
+  **"Ground Control"** (home/dev, **BLUE**, slot 1); passwords live only in the gitignored
+  `secrets.h`.
 
 ---
 
@@ -175,11 +177,10 @@ lamps via low-side MOSFET on **GPIO 32 (red) / 33 (blue)** — see backlog.
 
 ## 7. Backlog / next steps (agreed but not built)
 
-1. **Field WiFi reconfig — dual-network fallback (preferred).** Nodes are provisioned for the
-   user's HOME network. They need to run on the field network without opening the sealed boxes.
-   Plan: store TWO credential sets in NVS; scan and join whichever is present (prefer field/AP).
-   Add an MQTT `set_wifi` command + dashboard control for over-the-air changes. Serial
-   `wifi <ssid> <pass>` already exists (network.cpp) but is impractical on sealed boxes.
+1. **WiFi management enhancement.** Nodes already carry both baked-in presets: Field in slot 0
+   (RED) and Ground Control in slot 1 (BLUE). A future enhancement could add an MQTT `set_wifi`
+   command + dashboard control for over-the-air changes. Serial `wifi <ssid> <pass>` already
+   exists (network.cpp) but is impractical on sealed boxes.
 2. **Field WiFi hardware.** The Pi's onboard antenna was too weak to be the AP. Decision: use a
    **dedicated router/AP with external antennas**; the server (HP box) plugs in via Ethernet.
    (Considered OPNsense on the HP box and rejected — it's a router/firewall OS, poor WiFi-AP

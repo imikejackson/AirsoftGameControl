@@ -5,18 +5,17 @@ WiFi** into the firmware, and flash the nodes (USB or OTA) — plus deploy the
 dashboard. Read [CLAUDE.md](CLAUDE.md) for architecture; this is the hands-on
 deploy procedure.
 
-_Current state: firmware **v42**, dashboard **v9**, all pushed to
+_Current state: firmware **v43**, dashboard **v11**, all pushed to
 `github.com/imikejackson/AirsoftGameControl`. Nodes: 3 control points —
 alpha (Pink Hallway), bravo (Kill House), charlie (Dark Room)._
 
 ---
 
-## 0. The problem this fixes
-The flashed firmware's WiFi presets are **Home = "Ground Control"** and
-**Field = "Airsoft-Field" / "changeme" (a placeholder that never got set to the
-real field AP)**. That's why the boxes won't join the field network unless you
-spoof the home SSID. The real fix: put the actual field AP into `WIFI_PRESETS`
-slot 1, rebuild, and flash.
+## 0. Network presets
+`WIFI_PRESETS` slot 0 is **Field** / **RED** (`MKAirsoft Middletown`), and slot 1
+is **Ground Control** / **BLUE** (the home/dev network). The deployed boxes
+already have both baked in. At the field, power-cycle a box and press **RED** at
+the **SELECT WiFi** screen, or let it time out to the last-used network.
 
 ---
 
@@ -38,23 +37,23 @@ cd AirsoftGameControl
 ```
 (HTTPS + your GitHub login/token is simplest on a fresh laptop.)
 
-## 3. ⚑ Create secrets.h with the REAL field WiFi (this is the fix)
+## 3. ⚑ Create secrets.h with the REAL field WiFi
 `src/secrets.h` is gitignored, so a fresh clone doesn't have it. Create it from
 the template and set the real networks:
 ```
 cp src/secrets.example.h src/secrets.h        # (Windows: copy in the editor)
 ```
-Edit `src/secrets.h` so `WIFI_PRESETS` slot 1 is the **actual field AP**:
+Edit `src/secrets.h` so `WIFI_PRESETS` slot 0 is the **actual field AP**:
 ```c
-#define DEFAULT_WIFI_SSID  "Ground Control"
-#define DEFAULT_WIFI_PASS  "apebm25*"
+#define DEFAULT_WIFI_SSID  "MKAirsoft Middletown"
+#define DEFAULT_WIFI_PASS  "<FIELD PASSWORD>"
 
 #define WIFI_PRESETS { \
-  { "Home",  DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS }, \
-  { "Field", "<REAL FIELD SSID>", "<REAL FIELD PASSWORD>" }, \
+  { "Field",          DEFAULT_WIFI_SSID, DEFAULT_WIFI_PASS }, \
+  { "Ground Control", "Ground Control",  "<HOME PASSWORD>" }, \
 }
 ```
-- Slot 0 = **Red** button on the boot picker, slot 1 = **Blue**.
+- Slot 0 (Field) = **RED**, slot 1 (Ground Control) = **BLUE**.
 - SSIDs/passwords are case-sensitive; keep the quotes.
 - Bump `FIRMWARE_VERSION` in `src/config.h` by 1 (it shows on the LCD, so you can
   confirm the flash took).
@@ -76,7 +75,7 @@ pio device list                                   # find the CH340K COM port
 pio run -e esp32dev -t upload --upload-port COM<x>
 ```
 Repeat for each node. After it reboots, on the LCD **SELECT WiFi** menu press
-**Blue** (Field) to join — or let it time out to the last-used network.
+**RED** (Field) to join — or let it time out to the last-used network.
 
 ### 5b. Serial reprovision — NO rebuild (fastest if you just need WiFi changed)
 The firmware already takes runtime WiFi commands over serial; you don't have to
