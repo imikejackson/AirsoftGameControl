@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 
 SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
 
-DASH_VERSION = 10           # bump on every dashboard change; shown in the header
+DASH_VERSION = 11           # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -532,8 +532,11 @@ INDEX_HTML = r"""<!doctype html>
         margin-top:10px; overflow:hidden; }
   .bomb .fill { height:100%; width:0; background:#555; transition:width .2s linear; }
   .bomb .fill.red { background:#c0212e; } .bomb .fill.blue { background:#1f4fd0; }
-  .bomb .arm { font-size:12px; color:#9aa4b0; margin-top:6px; font-variant-numeric:tabular-nums;
-        min-height:15px; }
+  .bomb .arm { margin-top:8px; font-variant-numeric:tabular-nums; line-height:1.1; min-height:36px;
+        font-size:32px; font-weight:700; color:#e8e8e8; }
+  .bomb .arm .tot { font-size:16px; font-weight:400; color:#9aa4b0; }
+  .bomb .def { font-size:13px; color:#ffcf5c; margin-top:4px; min-height:15px;
+        font-variant-numeric:tabular-nums; }
   .bomb.active { border-color:#ffcf5c55; } .bomb.done { border-color:#7a1d24; opacity:.9; }
 </style>
 </head>
@@ -592,9 +595,9 @@ INDEX_HTML = r"""<!doctype html>
     <span class="rwin"></span>
   </div>
   <div class="bombs">
-    <div class="bomb" data-b="0"><div class="bh"><span class="bn">Pink Hallway</span><span class="bf">1:00</span></div><div class="bs"></div><div class="bar"><div class="fill"></div></div><div class="arm"></div></div>
-    <div class="bomb" data-b="1"><div class="bh"><span class="bn">Kill House</span><span class="bf">2:00</span></div><div class="bs"></div><div class="bar"><div class="fill"></div></div><div class="arm"></div></div>
-    <div class="bomb" data-b="2"><div class="bh"><span class="bn">Dark Room</span><span class="bf">3:00</span></div><div class="bs"></div><div class="bar"><div class="fill"></div></div><div class="arm"></div></div>
+    <div class="bomb" data-b="0"><div class="bh"><span class="bn">Pink Hallway</span><span class="bf">1:00</span></div><div class="bs"></div><div class="bar"><div class="fill"></div></div><div class="arm"></div><div class="def"></div></div>
+    <div class="bomb" data-b="1"><div class="bh"><span class="bn">Kill House</span><span class="bf">2:00</span></div><div class="bs"></div><div class="bar"><div class="fill"></div></div><div class="arm"></div><div class="def"></div></div>
+    <div class="bomb" data-b="2"><div class="bh"><span class="bn">Dark Room</span><span class="bf">3:00</span></div><div class="bs"></div><div class="bar"><div class="fill"></div></div><div class="arm"></div><div class="def"></div></div>
   </div>
 </div>
 <div id="grid"><div class="empty">Waiting for nodes to report…</div></div>
@@ -773,7 +776,7 @@ function renderRush(){
     sd.style.display = 'none'; win.textContent = '';
     bombs.forEach(b => { b.className = 'bomb'; b.querySelector('.bs').textContent = 'PENDING';
       const f = b.querySelector('.fill'); f.className = 'fill'; f.style.width = '0';
-      b.querySelector('.arm').textContent = ''; });
+      b.querySelector('.arm').textContent = ''; b.querySelector('.def').textContent = ''; });
     return;
   }
   sd.style.display = r.sudden_death ? 'inline-block' : 'none';
@@ -793,11 +796,13 @@ function renderRush(){
     fill.className = 'fill ' + ((active || done) ? atk : '');
     fill.style.width = (done ? 100 : (active ? Math.min(100, r.arm_s/fuses[i]*100) : 0)).toFixed(1) + '%';
     const arm = b.querySelector('.arm');
-    arm.textContent = active
-        ? (fmtms(r.arm_s) + ' / ' + fmtms(fuses[i])
-           + (r.sudden_death && num === 3 && game.defuse_s > 0
-              ? '   defuse ' + (r.defuse_hold_s||0).toFixed(1) + 's / ' + game.defuse_s + 's' : ''))
+    const remaining = Math.max(0, fuses[i] - r.arm_s);
+    arm.innerHTML = active
+        ? '<span class="rem">' + fmtms(remaining) + '</span><span class="tot"> / ' + fmtms(fuses[i]) + '</span>'
         : '';
+    const def = b.querySelector('.def');
+    def.textContent = (active && r.sudden_death && num === 3 && game.defuse_s > 0)
+        ? 'defuse ' + (r.defuse_hold_s||0).toFixed(1) + 's / ' + game.defuse_s + 's' : '';
   });
 }
 function ensureTile(key){
