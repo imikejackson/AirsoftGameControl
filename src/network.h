@@ -36,6 +36,10 @@ const String &wifiSsid();
 // Current IP as a string, or "0.0.0.0" when not connected.
 String wifiIpString();
 
+// Current WiFi signal strength in dBm (negative; closer to 0 = stronger).
+// Returns 0 when not connected.
+int wifiRssi();
+
 // The node's identity, loaded from NVS. Stable for the life of the boot.
 const String &nodeId();
 const char   *nodeTypeStr();

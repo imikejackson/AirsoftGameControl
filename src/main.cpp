@@ -486,7 +486,7 @@ void loop() {
     lcdShowGame(nodeLabel(), gameOwner(), gameCumulativeMs(TEAM_RED),
                 gameCumulativeMs(TEAM_BLUE), gameCaptureInProgress(),
                 gameCapturingTeam(), gameCaptureElapsedMs(), wifiConnected(),
-                wifiIpString(), gameRunning(), remainingS);
+                wifiIpString(), gameRunning(), remainingS, wifiRssi());
   }
 
   // Lightweight heartbeat to Serial so we can confirm the loop is alive and

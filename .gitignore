@@ -7,5 +7,9 @@
 # Local WiFi credentials — never commit. Use secrets.example.h as the template.
 src/secrets.h
 
+# Printable field card — contains the WiFi password in plain text. Edit the SVG
+# directly (or regenerate it); never commit.
+field-guide.svg
+
 # Machine-local Claude Code settings (COM ports, absolute paths, personal perms)
 .claude/settings.local.json

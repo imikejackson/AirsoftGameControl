@@ -18,7 +18,7 @@ void lcdSetup();
 void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
                  uint32_t blueMs, bool capturing, Team capturingTeam,
                  uint32_t captureElapsedMs, bool connected, const String &ip,
-                 bool running, int32_t remainingS);
+                 bool running, int32_t remainingS, int rssi);
 
 // On-boot WiFi network picker. `labels`/`ssids` are the menu rows (friendly
 // name + SSID); `sel` is the highlighted row; `secondsLeft` is the auto-connect

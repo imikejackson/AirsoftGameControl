@@ -242,6 +242,10 @@ String wifiIpString() {
   return wifiConnected() ? WiFi.localIP().toString() : String("0.0.0.0");
 }
 
+int wifiRssi() {
+  return wifiConnected() ? (int)WiFi.RSSI() : 0;
+}
+
 // ---------------------------------------------------------------------------
 // WiFi presets + on-boot picker
 // ---------------------------------------------------------------------------

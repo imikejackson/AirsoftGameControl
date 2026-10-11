@@ -28,6 +28,7 @@ String        g_lastRedT   = "";
 String        g_lastBlueT  = "";
 String        g_lastStatus = "";
 int           g_lastBarPct = -1;
+int           g_lastRssi   = -999;  // status strip: last-rendered WiFi RSSI
 int           g_pickerSel  = -999;  // WiFi picker: last-rendered selection
 int           g_pickerSecs = -999;  // WiFi picker: last-rendered countdown secs
 int           g_menuSel    = -999;  // game menu: last-rendered selection
@@ -82,13 +83,14 @@ void lcdSetup() {
   g_redBright = g_blueBright = -1;
   g_lastRedT = g_lastBlueT = g_lastStatus = "";
   g_lastBarPct = -1;
+  g_lastRssi = -999;
   Serial.println("[lcd] TFT_eSPI ST7789 initialized (landscape 320x240)");
 }
 
 void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
                  uint32_t blueMs, bool capturing, Team capturingTeam,
                  uint32_t captureElapsedMs, bool connected, const String &ip,
-                 bool running, int32_t remainingS) {
+                 bool running, int32_t remainingS, int rssi) {
   if ((millis() - g_lastDraw) < LCD_REFRESH_MS) return;
   g_lastDraw = millis();
 
@@ -158,6 +160,22 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
     tft.drawString("v" + String(FIRMWARE_VERSION) + "  " + line2, 6, STATUS_Y + 22, 1);
     g_lastStatus = key;
     g_lastBarPct = -1;  // force bar repaint
+    g_lastRssi   = -999;  // the strip clear wiped the RSSI; force it to redraw
+  }
+
+  // WiFi signal on line 2, right-aligned. Tracked on its own so the jittery
+  // RSSI doesn't repaint the whole status strip (which only redraws on a
+  // name/clock/status change). Its clear region sits clear of the capture bar.
+  if (rssi != g_lastRssi) {
+    g_lastRssi = rssi;
+    char rbuf[16];
+    if (connected) snprintf(rbuf, sizeof(rbuf), "WiFi: %d", rssi);
+    else           snprintf(rbuf, sizeof(rbuf), "WiFi: --");
+    const int ry = STATUS_Y + 22;
+    tft.fillRect(W - 110, ry, 110, 10, TFT_BLACK);
+    tft.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    tft.setTextDatum(TR_DATUM);
+    tft.drawString(rbuf, W - 6, ry, 1);
   }
 
   // Capture progress bar (capturing team's color).
@@ -383,4 +401,5 @@ void lcdForceRepaint() {
   g_redBright = g_blueBright = -1;
   g_lastRedT = g_lastBlueT = g_lastStatus = "";
   g_lastBarPct = -1;
+  g_lastRssi = -999;
 }
