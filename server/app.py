@@ -8,20 +8,28 @@ AUTHORITY: it owns the countdown, publishes the retained airsoft/game/state
 paho-mqtt with all HTML/JS embedded. Nodes are auto-discovered.
 
 Open http://<pi>:8080  (e.g. http://airsoft-pi.local:8080).
+  /      read-only PLAYER view (scores, clock, box ownership) — anyone
+  /ref   REFEREE page with the game controls — needs the 6-digit PIN
+Every command (/api/command) requires a referee login; hiding buttons is not
+what protects the game, this check is.
 """
+import hmac
 import json
 import os
 import queue
+import secrets
 import threading
 import time
+from datetime import timedelta
 
-from flask import (Flask, Response, request, jsonify, abort,
-                   send_from_directory, render_template_string)
+from flask import (Flask, Response, request, jsonify, abort, redirect,
+                   send_from_directory, render_template_string, session)
 import paho.mqtt.client as mqtt
 
-SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
+SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
+SOUNDS_DIR = os.path.join(SERVER_DIR, "sounds")
 
-DASH_VERSION = 13           # bump on every dashboard change; shown in the header
+DASH_VERSION = 14           # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -63,6 +71,46 @@ DOM_DEFAULT_CATCHUP = "medium"
 DOM_STALE_S = 30              # a box silent this long stops scoring (matches the UI)
 
 app = Flask(__name__)
+# Referee logins live in a signed session cookie. The key is random per process,
+# so restarting the dashboard logs every referee out (by design: simple, and
+# nothing secret ever needs to be stored or committed).
+app.secret_key = os.urandom(32)
+app.permanent_session_lifetime = timedelta(hours=12)
+
+# --- Referee PIN -------------------------------------------------------------
+# A single 6-digit PIN unlocks /ref and the command API. Never committed: it is
+# read from $AIRSOFT_REF_PIN, else server/ref_pin.txt (gitignored). If neither
+# exists, one is generated, saved to ref_pin.txt, and printed in the log.
+REF_PIN_FILE = os.path.join(SERVER_DIR, "ref_pin.txt")
+LOGIN_MAX_FAILS = 5           # wrong PINs per client before a lockout
+LOGIN_LOCK_S = 60             # lockout length (s): 6 digits can't be brute-forced
+
+
+def _load_ref_pin():
+    pin = os.environ.get("AIRSOFT_REF_PIN", "").strip()
+    if not pin:
+        try:
+            with open(REF_PIN_FILE) as f:
+                pin = f.read().strip()
+        except FileNotFoundError:
+            pin = f"{secrets.randbelow(10**6):06d}"
+            fd = os.open(REF_PIN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write(pin + "\n")
+            print(f"[dash] generated referee PIN {pin} (saved to {REF_PIN_FILE})")
+    if len(pin) != 6 or not pin.isdigit():
+        raise SystemExit(f"[dash] referee PIN must be exactly 6 digits (check {REF_PIN_FILE} "
+                         "or $AIRSOFT_REF_PIN)")
+    return pin
+
+
+REF_PIN = _load_ref_pin()
+_login_fails = {}             # client ip -> (fail count, locked-until epoch)
+_login_lock = threading.Lock()
+
+
+def _is_ref():
+    return bool(session.get("ref"))
 
 _nodes = {}                 # "type/id" -> node dict
 _nodes_lock = threading.Lock()
@@ -400,12 +448,57 @@ def _clock_loop():
         _publish_rush_status()   # retained per-box lock/role (deduped internally)
 
 
-@app.route("/")
-def index():
-    resp = Response(render_template_string(INDEX_HTML, ver=DASH_VERSION,
+def _page(ref):
+    resp = Response(render_template_string(INDEX_HTML, ver=DASH_VERSION, ref=ref,
                                            labels=json.dumps(NODE_LABELS)))
     resp.headers["Cache-Control"] = "no-store"  # always serve the latest page
     return resp
+
+
+@app.route("/")
+def index():
+    """Player view: live scores/clock/ownership, no controls."""
+    return _page(ref=False)
+
+
+@app.route("/ref", methods=["GET", "POST"])
+def ref():
+    """Referee page; asks for the PIN until this browser has logged in."""
+    error = None
+    if request.method == "POST":
+        ip = request.remote_addr or "?"
+        now = time.time()
+        with _login_lock:
+            fails, until = _login_fails.get(ip, (0, 0.0))
+            locked = now < until
+        if locked:
+            error = f"Too many wrong PINs. Try again in {int(until - now) + 1} s."
+        elif hmac.compare_digest(request.form.get("pin", "").strip(), REF_PIN):
+            with _login_lock:
+                _login_fails.pop(ip, None)
+            session.permanent = True
+            session["ref"] = True
+            print(f"[dash] referee login from {ip}")
+            return redirect("/ref")
+        else:
+            fails += 1
+            with _login_lock:
+                _login_fails[ip] = (0, now + LOGIN_LOCK_S) if fails >= LOGIN_MAX_FAILS \
+                    else (fails, 0.0)
+            print(f"[dash] wrong referee PIN from {ip} ({fails})")
+            error = ("Wrong PIN. Locked for %d s." % LOGIN_LOCK_S) if fails >= LOGIN_MAX_FAILS \
+                else "Wrong PIN."
+    if _is_ref():
+        return _page(ref=True)
+    resp = Response(render_template_string(LOGIN_HTML, ver=DASH_VERSION, error=error))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/ref/logout")
+def ref_logout():
+    session.clear()
+    return redirect("/")
 
 
 @app.route("/events")
@@ -454,6 +547,8 @@ def sound(pack, fname):
 
 @app.route("/api/command", methods=["POST"])
 def command():
+    if not _is_ref():
+        return jsonify(ok=False, error="referee login required"), 403
     if _client is None:
         return jsonify(ok=False, error="broker not connected"), 503
     body = request.get_json(force=True, silent=True) or {}
@@ -542,6 +637,43 @@ def command():
     return jsonify(ok=True, topic=topic, payload=payload)
 
 
+LOGIN_HTML = r"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Referee Login</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; font-family: system-ui, sans-serif; background:#0d0f12; color:#e8e8e8;
+         display:flex; min-height:100vh; align-items:center; justify-content:center; padding:16px; }
+  form { background:#15181d; border:1px solid #262b33; border-radius:12px; padding:24px;
+         width:100%; max-width:340px; }
+  h1 { font-size:18px; margin:0 0 4px; letter-spacing:.04em; }
+  p { color:#7d8794; font-size:14px; margin:0 0 16px; }
+  input { width:100%; box-sizing:border-box; font:inherit; font-size:28px; letter-spacing:.3em;
+          text-align:center; min-height:56px; background:#0d0f12; color:#e8e8e8;
+          border:1px solid #3a414c; border-radius:9px; padding:8px; }
+  button { width:100%; margin-top:12px; font:inherit; font-size:16px; font-weight:600; min-height:48px;
+           color:#e8e8e8; background:#1d6f33; border:1px solid #2a9648; border-radius:9px; cursor:pointer; }
+  .err { color:#ff6b6b; font-size:14px; margin-top:12px; min-height:18px; }
+  a { color:#7d8794; font-size:13px; display:block; margin-top:16px; text-align:center; }
+</style>
+</head>
+<body>
+<form method="post" action="/ref">
+  <h1>REFEREE</h1>
+  <p>Enter the 6-digit PIN to control the game.</p>
+  <input name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+         autocomplete="current-password" autofocus required>
+  <button type="submit">Unlock</button>
+  <div class="err">{{ error or '' }}</div>
+  <a href="/">Back to the scoreboard</a>
+</form>
+</body>
+</html>"""
+
+
 INDEX_HTML = r"""<!doctype html>
 <html lang="en">
 <head>
@@ -607,6 +739,14 @@ INDEX_HTML = r"""<!doctype html>
         border:1px solid #3a414c; border-radius:6px; padding:3px 8px; cursor:pointer; }
   button.reset:hover { background:#2a2f37; }
   .empty { color:#7d8794; padding:40px; text-align:center; }
+  /* One page, two roles: players never see game controls (and the server
+     rejects their commands anyway); referees don't see player-only hints. */
+  body.player .refonly { display:none !important; }
+  body.ref .playeronly { display:none !important; }
+  a.reflink { font-size:13px; color:#7d8794; text-decoration:none; border:1px solid #3a414c;
+        border-radius:7px; padding:6px 10px; }
+  a.reflink:hover { background:#2a2f37; }
+  #modeTxt { font-size:15px; font-weight:700; letter-spacing:.06em; color:#cdd3da; }
   /* Simulated box LCD (ST7789, 320x240), drawn to mirror src/lcd.cpp. */
   .lcdsim { display:none; padding:10px 14px 4px; border-top:1px solid #262b33; }
   .lcdsim canvas { display:block; width:100%; height:auto; aspect-ratio:4/3;
@@ -661,7 +801,7 @@ INDEX_HTML = r"""<!doctype html>
   .bomb.active { border-color:#ffcf5c55; } .bomb.done { border-color:#7a1d24; opacity:.9; }
 </style>
 </head>
-<body>
+<body class="{{ 'ref' if ref else 'player' }}">
 <header>
   <!-- Row 1: primary game controls -->
   <div class="bar bar-primary">
@@ -670,17 +810,21 @@ INDEX_HTML = r"""<!doctype html>
     <span id="status">connecting…</span>
     <span class="spacer"></span>
     <span id="clock" class="idle">--:--</span>
-    <label class="ctl">Mode
+    <a class="reflink playeronly" href="/ref">Referee</a>
+    <span id="modeTxt" class="playeronly"></span>
+    <label class="ctl refonly">Mode
       <select id="mode" class="sel" title="Game mode">
         <option value="domination">Domination</option>
         <option value="rush">Rush</option>
       </select></label>
-    <label class="ctl"><input id="minutes" type="number" min="1" max="120" value="15"> min</label>
-    <button class="btn go" id="startStop">Start</button>
-    <button class="btn danger" id="resetAll">Reset All</button>
-    <select id="pack" class="sel" title="Voice pack"><option value="">Browser voice</option></select>
-    <button class="btn" id="audioBtn">🔇 Audio</button>
-    <label class="ctl" title="Show a simulated copy of each box's LCD on its tile">Box screens
+    <label class="ctl refonly"><input id="minutes" type="number" min="1" max="120" value="15"> min</label>
+    <button class="btn go refonly" id="startStop">Start</button>
+    <button class="btn danger refonly" id="resetAll">Reset All</button>
+    <select id="pack" class="sel refonly" title="Voice pack"><option value="">Browser voice</option></select>
+    <button class="btn refonly" id="audioBtn">🔇 Audio</button>
+    <a class="reflink refonly" href="/" title="Open the player scoreboard">Player view</a>
+    <a class="reflink refonly" href="/ref/logout">Log out</a>
+    <label class="ctl refonly" title="Show a simulated copy of each box's LCD on its tile">Box screens
       <select id="simSel" class="sel">
         <option value="off">Off</option>
         <option value="time">Current (held time)</option>
@@ -689,7 +833,7 @@ INDEX_HTML = r"""<!doctype html>
   </div>
   <!-- Row 2: options for the selected game type -->
   <div class="bar bar-mode">
-    <span id="rushctl" class="ctl" style="display:none">
+    <span id="rushctl" class="ctl refonly" style="display:none">
       <label class="ctl">Attackers
         <select id="attacker" class="sel">
           <option value="red">Red</option><option value="blue">Blue</option>
@@ -702,7 +846,8 @@ INDEX_HTML = r"""<!doctype html>
         </select></label>
     </span>
     <span id="domctl" class="ctl">
-      <label class="ctl">Catch-up
+      <span id="catchupTxt" class="modehint playeronly"></span>
+      <label class="ctl refonly">Catch-up
         <select id="catchup" class="sel" title="Rubber band: trailing team scores faster, leader slower">
           <option value="off">Off</option><option value="low">Low</option>
           <option value="medium">Medium</option><option value="high">High</option>
@@ -738,6 +883,7 @@ INDEX_HTML = r"""<!doctype html>
 <div id="grid"><div class="empty">Waiting for nodes to report…</div></div>
 
 <script>
+const IS_REF = {{ 'true' if ref else 'false' }};   // referee page (vs player view)
 const grid = document.getElementById('grid');
 const statusEl = document.getElementById('status');
 const clockEl = document.getElementById('clock');
@@ -860,6 +1006,10 @@ function sendCmd(body){
   return fetch('/api/command', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify(body)
+  }).then(r => {
+    // Not (or no longer) logged in — e.g. the server restarted: back to the PIN.
+    if (r.status === 403) location.href = '/ref';
+    return r;
   }).catch(err => alert('Command failed: ' + err));
 }
 function renderGame(){
@@ -971,7 +1121,7 @@ function ensureTile(key){
     </div>
     <div class="row red"><span class="lbl">RED</span><span class="t rt">0:00</span></div>
     <div class="row blue"><span class="lbl">BLUE</span><span class="t bt">0:00</span></div>
-    <div class="foot"><span class="cap"></span><button class="reset">Reset</button></div>
+    <div class="foot"><span class="cap"></span><button class="reset refonly">Reset</button></div>
     <div class="lcdsim"><canvas width="320" height="240"></canvas><div class="cap2"></div></div>`;
   grid.appendChild(el);
   return el;
@@ -986,7 +1136,7 @@ function ensureTile(key){
 let simMode = 'off';
 try { simMode = new URLSearchParams(location.search).get('sim')
                 || localStorage.getItem('simMode') || 'off'; } catch(e){}
-if (!['off','time','score'].includes(simMode)) simMode = 'off';
+if (!['off','time','score'].includes(simMode) || !IS_REF) simMode = 'off';
 const TFT = { red:'#ff0000', blue:'#0000ff', redDim:'rgb(80,0,0)', blueDim:'rgb(0,0,95)',
               white:'#ffffff', yellow:'#ffff00', grey:'#808080', ltgrey:'#c0c0c0', black:'#000' };
 const DIGIT_FONT = '700 88px "Arial Narrow", "Roboto Condensed", Arial, sans-serif';
@@ -1106,6 +1256,9 @@ es.onmessage = (e) => {
     rushCtl.style.display = isRush ? 'inline-flex' : 'none';
     domCtl.style.display = isRush ? 'none' : 'inline-flex';
     if (d.catchup) catchupSel.value = d.catchup;
+    document.getElementById('modeTxt').textContent = isRush ? 'RUSH' : 'DOMINATION';
+    document.getElementById('catchupTxt').textContent =
+        'Catch-up: ' + cap(d.catchup || 'off') + ' — a team that falls far behind scores faster.';
     if (d.attacker) attackerSel.value = d.attacker;
     if (typeof d.defuse_s === 'number') defuseSel.value = String(d.defuse_s);
     if (audioOn) {

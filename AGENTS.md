@@ -45,7 +45,7 @@ Every node also has a power switch, a reset button, and USB-C or barrel-jack pow
 ## 2. Where it stands now
 
 - **Firmware** (`src/`, PlatformIO, Arduino-ESP32): `FIRMWARE_VERSION` **44** in [src/config.h](src/config.h).
-- **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **13**.
+- **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **14**.
 - **Deployed:** 3 control points in sealed enclosures, each powered by a 5 V / 5 A supply
   with no USB access, so they're updated over WiFi (OTA) only:
   - `alpha` = Pink Hallway
@@ -62,8 +62,11 @@ Every node also has a power switch, a reset button, and USB-C or barrel-jack pow
 - **Other features that work end to end:**
   - ST7789 LCD scoreboard, plus an optional OLED.
   - A 300-LED strip per node.
-  - The live dashboard at `http://airsoft-pi.local:8080`: game countdown, start/stop, reset
-    and a results table.
+  - The live dashboard (dash v14 and later):
+    - `http://airsoft-pi.local:8080/` is the read-only **player view**: scores, clock and box
+      ownership.
+    - `/ref` is the **referee page**: start/stop, reset, mode and catch-up. It needs a single
+      6-digit PIN.
   - Browser audio announcements, with a voice-pack system that falls back to TTS.
 - **Not built yet:** flag and referee node types, Capture-All-Flags and CTF modes,
   arcade-button lamps, and SQLite match history. See the backlog (§14).
@@ -200,6 +203,21 @@ airsoft/game/command                       # Server commands to all nodes (reset
 - Start and Reset All zero the scores. The catch-up level can be changed mid-round.
 - The team scores are also published as `score_red` and `score_blue` in
   `airsoft/game/state`, so the box firmware could show them in the future. It doesn't yet.
+
+**Player view and referee PIN (dash v14):**
+- Anyone on the field WiFi can open `/`. It shows no controls.
+- `/ref` asks for the PIN once per browser. The login lasts until the dashboard restarts,
+  which logs every referee out.
+- `/api/command` refuses everything (HTTP 403) without a referee login. **This server check
+  is what protects the game; hidden buttons alone would not.**
+- **Where the PIN comes from:** `$AIRSOFT_REF_PIN`, otherwise `server/ref_pin.txt`
+  (gitignored; on the server it's `~/airsoft-dashboard/ref_pin.txt`). If neither exists, a
+  PIN is generated, saved to that file, and printed once in the log.
+  - To read it: `cat ~/airsoft-dashboard/ref_pin.txt`
+  - To change it: write a new 6-digit PIN to that file, then restart the service.
+- **Lockout:** after 5 wrong PINs, that device is locked out for 60 s.
+- The site is plain HTTP, so someone capturing WiFi traffic could read the PIN. That was
+  accepted as good enough for a game.
 
 **Box screen simulator (dash v13):** the dashboard's "Box screens" control (or a
 `?sim=time` / `?sim=score` link) draws an approximate copy of each box's 320×240 LCD on its

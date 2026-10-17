@@ -13,3 +13,6 @@ field-guide.svg
 
 # Machine-local Claude Code settings (COM ports, absolute paths, personal perms)
 .claude/settings.local.json
+
+# Referee PIN for the dashboard (server/app.py) — never commit.
+server/ref_pin.txt
