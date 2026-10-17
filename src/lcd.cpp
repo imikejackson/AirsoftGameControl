@@ -179,7 +179,7 @@ void lcdShowGame(const String &nodeName, Team owner, uint32_t redMs,
   }
 
   // Capture progress bar (capturing team's color).
-  uint32_t pctU = capturing ? captureElapsedMs * 100 / CAPTURE_HOLD_MS : 0;
+  uint32_t pctU = capturing ? captureElapsedMs * 100 / CAPTURE_HOLD_DIV : 0;
   if (pctU > 100) pctU = 100;
   const int pct = (int)pctU;
   if (pct != g_lastBarPct) {

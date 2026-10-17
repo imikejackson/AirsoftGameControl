@@ -87,7 +87,7 @@ void oledShowGame(const String &nodeName, Team owner, uint32_t redMs,
 
   g_oled.setCursor(0, 8);
   if (capturing) {
-    uint32_t pct = captureElapsedMs * 100 / CAPTURE_HOLD_MS;
+    uint32_t pct = captureElapsedMs * 100 / CAPTURE_HOLD_DIV;
     if (pct > 100) pct = 100;
     g_oled.print("CAP ");
     g_oled.print(ownerLabel(capturingTeam));
@@ -110,7 +110,7 @@ void oledShowGame(const String &nodeName, Team owner, uint32_t redMs,
 
   // Capture progress bar across the very bottom during a capture attempt.
   if (capturing) {
-    uint32_t w = captureElapsedMs * OLED_WIDTH / CAPTURE_HOLD_MS;
+    uint32_t w = captureElapsedMs * OLED_WIDTH / CAPTURE_HOLD_DIV;
     if (w > OLED_WIDTH) w = OLED_WIDTH;
     g_oled.fillRect(0, 62, (int)w, 2, SSD1306_WHITE);
   }

@@ -44,7 +44,7 @@ Every node also has a power switch, a reset button, and USB-C or barrel-jack pow
 
 ## 2. Where it stands now
 
-- **Firmware** (`src/`, PlatformIO, Arduino-ESP32): `FIRMWARE_VERSION` **43** in [src/config.h](src/config.h).
+- **Firmware** (`src/`, PlatformIO, Arduino-ESP32): `FIRMWARE_VERSION` **44** in [src/config.h](src/config.h).
 - **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **11**.
 - **Deployed:** 3 control points in sealed enclosures, each powered by a 5 V / 5 A supply
   with no USB access, so they're updated over WiFi (OTA) only:
@@ -153,10 +153,13 @@ airsoft/game/command                       # Server commands to all nodes (reset
 ## 7. Game behavior (control point firmware)
 
 **Capture and timers:**
-- **Capture hold:** a team holds its button for **0.5 s** (`CAPTURE_HOLD_MS`) to capture.
-  If the button contact drops for less than 200 ms (`CAPTURE_GRACE_MS`), the capture
-  countdown pauses instead of restarting. The original spec asked for 2–3 s; it was
-  shortened on purpose so captures feel nearly instant.
+- **Capture is instant (since v44):** a single press captures the point as soon as it
+  clears the 50 ms debounce (`CAPTURE_HOLD_MS` = 0). The original spec asked for a 2–3 s
+  hold to stop griefing. It was cut to 0.5 s and then to zero because players found any hold
+  too slow. Don't add a hold back unless the user asks.
+  - If `CAPTURE_HOLD_MS` is ever raised again, the hold returns along with its progress bar
+    and the 200 ms grace window (`CAPTURE_GRACE_MS`), which pauses rather than restarts
+    the countdown when a button contact flickers.
 - **Pressing your own team's button** while you already hold the point does nothing, so
   there are no accidental resets.
 - **Timers are cumulative (King of the Hill):** when a team takes a point, the other team's

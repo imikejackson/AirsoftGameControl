@@ -111,8 +111,9 @@ void ledsShow(Team owner, bool capturing, Team capturingTeam,
   g_lastFrame = millis();
 
   if (capturing) {
-    // Progress-fill in the capturing team's color as the 2.5s hold advances.
-    uint32_t pct = captureElapsedMs * 100 / CAPTURE_HOLD_MS;
+    // Progress-fill in the capturing team's color as the capture hold advances
+    // (never reached when CAPTURE_HOLD_MS is 0: captures complete instantly).
+    uint32_t pct = captureElapsedMs * 100 / CAPTURE_HOLD_DIV;
     if (pct > 100) pct = 100;
     const int lit = (int)((long)NUM_LEDS * pct / 100);
     const CRGB c = teamColor(capturingTeam);

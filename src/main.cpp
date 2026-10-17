@@ -405,7 +405,7 @@ void setup() {
 }
 
 // Drive the onboard RGB from the GAME state: solid owner color when held, the
-// capturing team's color BLINKING during the 2.5 s capture hold, off when
+// capturing team's color BLINKING during the capture hold (if any), off when
 // neutral. Only writes the pixel when the color actually changes. (Bring-up
 // indicator; real ownership color will come from the WS2812B strip module.)
 static void updateStatusLed() {

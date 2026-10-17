@@ -3,9 +3,10 @@
 // game_controlpoint.h — King-of-the-Hill control point logic.
 //
 // Local state is authoritative (CLAUDE.md): the buttons drive capture and the
-// timers accrue here, independent of the network. A team captures by holding
-// their button for CAPTURE_HOLD_MS; ownership then persists until the other
-// team captures. Each team's CUMULATIVE hold time is banked across captures.
+// timers accrue here, independent of the network. A team captures by pressing
+// their button (held for CAPTURE_HOLD_MS; 0 = instant); ownership then persists
+// until the other team captures. Each team's CUMULATIVE hold time is banked
+// across captures.
 //
 #include "types.h"
 
@@ -22,7 +23,8 @@ Team gameOwner();
 // if that team currently owns the point.
 uint32_t gameCumulativeMs(Team team);
 
-// Capture-in-progress state (for LED feedback during the 2.5s hold).
+// Capture-in-progress state (for LED/LCD progress feedback during the hold).
+// Always false when CAPTURE_HOLD_MS is 0, since captures complete instantly.
 bool     gameCaptureInProgress();
 Team     gameCapturingTeam();
 uint32_t gameCaptureElapsedMs();

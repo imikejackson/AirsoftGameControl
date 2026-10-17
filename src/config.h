@@ -14,7 +14,7 @@
 // Simple monotonic integer. Increment by 1 on EVERY firmware change. Shown on
 // the e-paper so you can confirm which build a node is running — especially
 // useful for spotting whether an OTA push actually took.
-#define FIRMWARE_VERSION 43
+#define FIRMWARE_VERSION 44
 
 // ---------------------------------------------------------------------------
 // Node type selection
@@ -131,10 +131,14 @@
 // ---------------------------------------------------------------------------
 // Game logic
 // ---------------------------------------------------------------------------
-// A team must hold their button continuously this long to capture the point.
-// Kept short (0.5s) for snappy, near-instant flips; still long enough to reject
-// an accidental brush of the button.
-#define CAPTURE_HOLD_MS 500UL
+// How long a team must hold their button to capture the point. 0 = INSTANT:
+// the capture lands as soon as the press clears the BUTTON_DEBOUNCE_MS filter
+// (~50 ms). Players found any noticeable hold (it was 2.5 s, then 0.5 s) too
+// slow, so it's instant now. Raise it again if accidental bumps become a
+// problem; the progress-bar UI and grace window come back automatically.
+#define CAPTURE_HOLD_MS 0UL
+// Safe divisor for capture-progress math (CAPTURE_HOLD_MS may be 0).
+#define CAPTURE_HOLD_DIV (CAPTURE_HOLD_MS ? CAPTURE_HOLD_MS : 1UL)
 
 // Reset button: a quick TAP zeros timers (neutral); a long HOLD opens the local
 // game menu on the LCD (start a game standalone, no server needed). This is the
