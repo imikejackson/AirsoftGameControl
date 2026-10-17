@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 
 SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
 
-DASH_VERSION = 12           # bump on every dashboard change; shown in the header
+DASH_VERSION = 13           # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -173,6 +173,12 @@ def _on_message(client, userdata, msg):
     if len(parts) < 4 or parts[0] != "airsoft" or parts[1] == "game":
         return
     ntype, nid, kind = parts[1], parts[2], parts[3]
+    # Only messages a box itself publishes may create/refresh its tile. The
+    # dashboard's own per-box topics (e.g. the retained .../rush role it writes)
+    # echo back to us too; treating those as box traffic made alpha/bravo/charlie
+    # appear "online" at startup even when powered off.
+    if kind not in ("status", "state", "heartbeat"):
+        return
     payload = msg.payload.decode("utf-8", "ignore").strip()
 
     with _nodes_lock:
@@ -601,6 +607,12 @@ INDEX_HTML = r"""<!doctype html>
         border:1px solid #3a414c; border-radius:6px; padding:3px 8px; cursor:pointer; }
   button.reset:hover { background:#2a2f37; }
   .empty { color:#7d8794; padding:40px; text-align:center; }
+  /* Simulated box LCD (ST7789, 320x240), drawn to mirror src/lcd.cpp. */
+  .lcdsim { display:none; padding:10px 14px 4px; border-top:1px solid #262b33; }
+  .lcdsim canvas { display:block; width:100%; height:auto; aspect-ratio:4/3;
+        border:6px solid #050608; border-radius:6px; background:#000; image-rendering:pixelated; }
+  .lcdsim .cap2 { font-size:11px; color:#7d8794; padding:4px 0 2px; }
+  body.sim .lcdsim { display:block; }
   #results { display:none; margin:14px 18px 0; padding:16px 20px; border-radius:12px;
         background:#15181d; border:1px solid #3a414c; }
   #results .rtitle { font-size:13px; letter-spacing:.22em; font-weight:800; color:#ffcf5c; }
@@ -668,6 +680,12 @@ INDEX_HTML = r"""<!doctype html>
     <button class="btn danger" id="resetAll">Reset All</button>
     <select id="pack" class="sel" title="Voice pack"><option value="">Browser voice</option></select>
     <button class="btn" id="audioBtn">🔇 Audio</button>
+    <label class="ctl" title="Show a simulated copy of each box's LCD on its tile">Box screens
+      <select id="simSel" class="sel">
+        <option value="off">Off</option>
+        <option value="time">Current (held time)</option>
+        <option value="score">Score</option>
+      </select></label>
   </div>
   <!-- Row 2: options for the selected game type -->
   <div class="bar bar-mode">
@@ -953,10 +971,74 @@ function ensureTile(key){
     </div>
     <div class="row red"><span class="lbl">RED</span><span class="t rt">0:00</span></div>
     <div class="row blue"><span class="lbl">BLUE</span><span class="t bt">0:00</span></div>
-    <div class="foot"><span class="cap"></span><button class="reset">Reset</button></div>`;
+    <div class="foot"><span class="cap"></span><button class="reset">Reset</button></div>
+    <div class="lcdsim"><canvas width="320" height="240"></canvas><div class="cap2"></div></div>`;
   grid.appendChild(el);
   return el;
 }
+// --- Box LCD simulator ------------------------------------------------------
+// Mirrors lcdShowGame() in src/lcd.cpp: landscape 320x240, a RED row (y 0-99)
+// and a BLUE row (y 100-199), the box OWNER's row full color and the other
+// dimmed, plus a 40px status strip. Fonts approximate TFT_eSPI's: Font 1 = 8px,
+// Font 2 = 16px, Font 6 x2 = ~96px digits. Iterate designs here, then port the
+// winner to lcd.cpp. 'time' = the current firmware screen; 'score' = the same
+// layout showing the team scores instead of held time on this box.
+let simMode = 'off';
+try { simMode = new URLSearchParams(location.search).get('sim')
+                || localStorage.getItem('simMode') || 'off'; } catch(e){}
+if (!['off','time','score'].includes(simMode)) simMode = 'off';
+const TFT = { red:'#ff0000', blue:'#0000ff', redDim:'rgb(80,0,0)', blueDim:'rgb(0,0,95)',
+              white:'#ffffff', yellow:'#ffff00', grey:'#808080', ltgrey:'#c0c0c0', black:'#000' };
+const DIGIT_FONT = '700 88px "Arial Narrow", "Roboto Condensed", Arial, sans-serif';
+function mmss(sec){ sec = Math.max(0, Math.floor(sec));
+  return String(Math.floor(sec/60)).padStart(2,'0') + ':' + String(sec%60).padStart(2,'0'); }
+function fitText(ctx, text, maxW, font){
+  ctx.font = font; const w = ctx.measureText(text).width;
+  if (w > maxW) ctx.font = font.replace(/(\d+)px/, (m, px) => Math.floor(px * maxW / w) + 'px');
+}
+function drawBoxScreen(cv, n, variant){
+  const ctx = cv.getContext('2d'), W = 320, d = n.data;
+  const owner = n.stale ? 'none' : d.owner;
+  const dom = game.dom || {red:0, blue:0};
+  const rows = [
+    {y:0,   label:'RED',  team:'red',  bg: owner==='red'  ? TFT.red  : TFT.redDim},
+    {y:100, label:'BLUE', team:'blue', bg: owner==='blue' ? TFT.blue : TFT.blueDim}];
+  for (const r of rows){
+    ctx.fillStyle = r.bg; ctx.fillRect(0, r.y, W, 100);
+    ctx.fillStyle = TFT.white; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+    ctx.font = '700 14px Arial, sans-serif'; ctx.fillText(r.label, 6, r.y + 6);
+    const big = variant === 'score' ? String(dom[r.team] || 0) : mmss(liveSecs(n, r.team));
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    fitText(ctx, big, W - 40, DIGIT_FONT);
+    ctx.fillText(big, W/2, r.y + 50 + 6);
+  }
+  // Status strip: name + countdown, then version + IP/PAUSED/TIME! + WiFi.
+  const SY = 200; ctx.fillStyle = TFT.black; ctx.fillRect(0, SY, W, 40);
+  const over = !game.running && game.remaining_s === 0;
+  const rem = Math.max(0, Math.round(game.remaining_s || 0));
+  const cd = Math.floor(rem/60) + ':' + String(rem%60).padStart(2,'0');
+  ctx.textBaseline = 'top'; ctx.font = '700 15px Arial, sans-serif';
+  ctx.textAlign = 'left'; ctx.fillStyle = TFT.white;
+  ctx.fillText(nodeName(d.id).toUpperCase(), 6, SY + 2);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = over ? TFT.red : (!game.running ? TFT.yellow : (rem <= 10 ? TFT.red : TFT.white));
+  ctx.fillText(cd, W - 6, SY + 2);
+  const line2 = game.running ? (n.stale ? 'no wifi' : (d.ip || ''))
+                             : (over ? '** TIME! **' : '** PAUSED **');
+  ctx.font = '10px monospace'; ctx.textAlign = 'left';
+  ctx.fillStyle = game.running ? TFT.grey : (over ? TFT.red : TFT.yellow);
+  ctx.fillText('v?  ' + line2, 6, SY + 22);
+  ctx.textAlign = 'right'; ctx.fillStyle = TFT.ltgrey;
+  ctx.fillText('WiFi: ' + (n.stale || d.rssi == null ? '--' : d.rssi), W - 6, SY + 22);
+  cv.nextElementSibling.textContent = 'Simulated ' + (variant === 'score' ? 'score' : 'held-time')
+      + ' screen (approximate fonts)';
+}
+const simSel = document.getElementById('simSel');
+simSel.value = simMode; document.body.classList.toggle('sim', simMode !== 'off');
+simSel.onchange = () => { simMode = simSel.value;
+  try { localStorage.setItem('simMode', simMode); } catch(e){}
+  document.body.classList.toggle('sim', simMode !== 'off'); render(); };
+
 function render(){
   const now = Date.now();
   for (const key in nodes){
@@ -975,6 +1057,7 @@ function render(){
     el.querySelector('.bt').textContent = fmt(liveSecs(n,'blue'));
     el.querySelector('.cap').textContent = (!n.stale && n.data.owner && n.data.owner!=='none')
         ? ('held by ' + n.data.owner) : (n.stale ? 'offline' : 'neutral');
+    if (simMode !== 'off') drawBoxScreen(el.querySelector('.lcdsim canvas'), n, simMode);
   }
   renderResults();
 }
@@ -1048,7 +1131,7 @@ es.onmessage = (e) => {
         }
       }
     }
-    game = d; renderGame(); return;
+    game = d; renderGame(); if (simMode !== 'off') render(); return;
   }
   const key = d.type + '/' + d.id;
   const prev = nodes[key];

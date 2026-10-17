@@ -45,7 +45,7 @@ Every node also has a power switch, a reset button, and USB-C or barrel-jack pow
 ## 2. Where it stands now
 
 - **Firmware** (`src/`, PlatformIO, Arduino-ESP32): `FIRMWARE_VERSION` **44** in [src/config.h](src/config.h).
-- **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **12**.
+- **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **13**.
 - **Deployed:** 3 control points in sealed enclosures, each powered by a 5 V / 5 A supply
   with no USB access, so they're updated over WiFi (OTA) only:
   - `alpha` = Pink Hallway
@@ -200,6 +200,13 @@ airsoft/game/command                       # Server commands to all nodes (reset
 - Start and Reset All zero the scores. The catch-up level can be changed mid-round.
 - The team scores are also published as `score_red` and `score_blue` in
   `airsoft/game/state`, so the box firmware could show them in the future. It doesn't yet.
+
+**Box screen simulator (dash v13):** the dashboard's "Box screens" control (or a
+`?sim=time` / `?sim=score` link) draws an approximate copy of each box's 320×240 LCD on its
+tile. It mirrors `lcdShowGame()` in [src/lcd.cpp](src/lcd.cpp). Use it to try out screen
+designs in the browser before porting them to firmware. If you change the LCD layout, keep
+`drawBoxScreen()` in `server/app.py` in step with it. Boxes don't report their firmware
+version over MQTT, so the simulated screen shows `v?`.
 
 **Sleep:** after 10 minutes with no game running and no button presses, the box blanks its
 displays and runs a rainbow LED chase. Any button press, or a game starting, wakes it.
