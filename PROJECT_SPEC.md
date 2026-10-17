@@ -1,6 +1,6 @@
 # Airsoft Control Point System — Project Specification
 
-This document captures the full design and rationale for the airsoft control point system. It exists as a deeper reference alongside `CLAUDE.md` (which is a concise summary read every Claude Code session). When a design decision is unclear or needs context, this document explains the *why*.
+This document captures the full design and rationale for the airsoft control point system. It exists as a deeper reference alongside `AGENTS.md` (the concise agent reference; `CLAUDE.md` imports it). When a design decision is unclear or needs context, this document explains the *why*.
 
 ## Background and Use Case
 

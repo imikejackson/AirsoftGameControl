@@ -2,7 +2,7 @@
 
 Goal: from a laptop **at the field**, set up the toolchain, bake the **real field
 WiFi** into the firmware, and flash the nodes (USB or OTA) — plus deploy the
-dashboard. Read [CLAUDE.md](CLAUDE.md) for architecture; this is the hands-on
+dashboard. Read [AGENTS.md](AGENTS.md) for architecture; this is the hands-on
 deploy procedure.
 
 _Current state: firmware **v43**, dashboard **v11**, all pushed to
