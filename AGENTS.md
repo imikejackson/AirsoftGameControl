@@ -312,6 +312,23 @@ uploads over USB, and the plug opens the serial monitor.
 - **Target nodes by their `.local` names.** Their DHCP IPs move.
 - **The server has no git.** Deploy `app.py` with scp, as above.
 
+**Local test server (no Docker, no sudo):** on 2026-10-17 the user said the
+`airsoft-pi.local` broker is no longer running, so bench testing used a broker and dashboard
+running on the dev laptop. They run from a conda environment under Miniforge, which is
+installed at `/opt/local/anaconda3`:
+
+```
+mamba create -n airsoft -c conda-forge python=3.12 mosquitto flask paho-mqtt
+# mosquitto.conf: listener 1883 0.0.0.0 / allow_anonymous true
+/opt/local/anaconda3/envs/airsoft/sbin/mosquitto -c mosquitto.conf
+cd server && /opt/local/anaconda3/envs/airsoft/bin/python app.py   # dashboard on :8080
+```
+
+- `app.py` already connects to the broker on `localhost`, so it needs no changes.
+- Point a node at the laptop over serial with `mqtt <laptop-ip> 1883`.
+- The laptop's IP comes from DHCP and can change, so recheck it if the node can't reach
+  MQTT.
+
 **PlatformIO environments ([platformio.ini](platformio.ini)):**
 - They all share an `[env]` base with the common libraries and build flags.
 - `esp32dev`, `controlpoint`, `flag`, and `referee` each build one node type, selected with
@@ -329,6 +346,7 @@ uploads over USB, and the plug opens the serial monitor.
 | Control point alpha | `airsoft-controlpoint-alpha.local` | DHCP IP changes, so use the hostname |
 | Control point bravo | `airsoft-controlpoint-bravo.local` | Same |
 | Control point charlie | `airsoft-controlpoint-charlie.local` | Same |
+| Bench/dev board gamma (not deployed) | `airsoft-controlpoint-gamma.local` | USB on the Linux dev laptop; node ID set 2026-10-17 |
 | Central server / broker | `airsoft-pi.local` | Mosquitto on :1883, dashboard on :8080 |
 
 - **Node IPs move:** they have been .36/.37/.39 and later .49/.50/.52. Always use the `.local`
