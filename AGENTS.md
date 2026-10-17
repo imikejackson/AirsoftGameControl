@@ -213,7 +213,10 @@ airsoft/game/command                       # Server commands to all nodes (reset
 - **Where the PIN comes from:** `$AIRSOFT_REF_PIN`, otherwise `server/ref_pin.txt`
   (gitignored; on the server it's `~/airsoft-dashboard/ref_pin.txt`). If neither exists, a
   PIN is generated, saved to that file, and printed once in the log.
-  - To read it: `cat ~/airsoft-dashboard/ref_pin.txt`
+  - **The user chose a fixed PIN.** It's kept in `server/ref_pin.txt` on the dev laptop and
+    copied to the server with the deploy commands in §10. **The GitHub repo is public, so
+    never put the PIN in code, docs or commits.** Ask the user for it if it's lost.
+  - To read it on the server: `cat ~/airsoft-dashboard/ref_pin.txt`
   - To change it: write a new 6-digit PIN to that file, then restart the service.
 - **Lockout:** after 5 wrong PINs, that device is locked out for 60 s.
 - The site is plain HTTP, so someone capturing WiFi traffic could read the PIN. That was
@@ -341,6 +344,7 @@ pio run -e esp32dev -t upload --upload-port <COMx|/dev/ttyUSBx>        # USB (be
 pio run -e esp32dev_ota -t upload --upload-port airsoft-controlpoint-<id>.local   # OTA (deployed)
 pio device monitor                                     # serial monitor, 115200 baud
 scp server/app.py airsoft@airsoft-pi.local:~/airsoft-dashboard/app.py
+scp server/ref_pin.txt airsoft@airsoft-pi.local:~/airsoft-dashboard/ref_pin.txt   # referee PIN (gitignored)
 ssh airsoft@airsoft-pi.local 'sudo systemctl restart airsoft-dashboard'
 ```
 
@@ -516,7 +520,9 @@ cd server && /opt/local/anaconda3/envs/airsoft/bin/python app.py   # dashboard o
    connected by Ethernet. Running OPNsense on the HP box was considered and rejected: it is
    a router/firewall OS with poor WiFi access-point support, and it doesn't host the app
    stack well.
-6. **Voice-pack audio clips:** the support for them exists (a manifest plus TTS fallback).
-   Generate the clips and scp them to the server.
+6. **Field-speaker audio (planned dash v15):** play the announcements from the server's own
+   headphone jack into the field PA. The user confirmed the NUC has a headphone port. The
+   clips and their exact words are listed in [server/voice_clips.csv](server/voice_clips.csv);
+   generate them (Piper is the plan) and scp them to the server.
 7. **SQLite match history.**
 8. **WIRING.md:** document the USB-C power pigtail and the arcade-button pinout.

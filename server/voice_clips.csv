@@ -1,0 +1,33 @@
+file,text,plays_when,status
+start.mp3,Game on.,A round starts (Domination),current
+stopped.mp3,Game stopped.,The referee presses Stop before time runs out,v15
+five_minutes.mp3,Five minutes remaining.,The clock passes 5:00,v15
+one_minute.mp3,One minute remaining.,The clock passes 1:00,current
+ten_seconds.mp3,Ten seconds.,The clock passes 0:10,v15
+over_red.mp3,Time! Red wins.,Domination ends with Red ahead,current
+over_blue.mp3,Time! Blue wins.,Domination ends with Blue ahead,current
+over_tie.mp3,Time! It's a tie.,Domination ends tied,current
+lead_red.mp3,Red takes the lead.,Domination: Red moves ahead on score,v15
+lead_blue.mp3,Blue takes the lead.,Domination: Blue moves ahead on score,v15
+catchup_red.mp3,Red is catching up.,Domination: the catch-up boost switches on for Red,v15
+catchup_blue.mp3,Blue is catching up.,Domination: the catch-up boost switches on for Blue,v15
+all_red.mp3,Red holds every point.,Red owns every online box,v15
+all_blue.mp3,Blue holds every point.,Blue owns every online box,v15
+cap_alpha_red.mp3,Pink Hallway taken by Red.,Red captures alpha (Pink Hallway),current
+cap_alpha_blue.mp3,Pink Hallway taken by Blue.,Blue captures alpha (Pink Hallway),current
+cap_bravo_red.mp3,Kill House taken by Red.,Red captures bravo (Kill House),current
+cap_bravo_blue.mp3,Kill House taken by Blue.,Blue captures bravo (Kill House),current
+cap_charlie_red.mp3,Dark Room taken by Red.,Red captures charlie (Dark Room),current
+cap_charlie_blue.mp3,Dark Room taken by Blue.,Blue captures charlie (Dark Room),current
+rush_start_red.mp3,Rush. Red is attacking.,A Rush round starts with Red attacking,v15
+rush_start_blue.mp3,Rush. Blue is attacking.,A Rush round starts with Blue attacking,v15
+bomb1_detonated.mp3,Bomb one detonated.,Rush: bomb 1 (Pink Hallway) goes off,v15
+bomb2_detonated.mp3,Bomb two detonated.,Rush: bomb 2 (Kill House) goes off,v15
+bomb3_detonated.mp3,Bomb three detonated.,Rush: bomb 3 (Dark Room) goes off,v15
+sudden_death.mp3,Sudden death. Bomb three is live.,Rush: time runs out with bomb 3 still armable,v15
+rush_win_attackers_red.mp3,Red attackers win.,Rush ends: Red attacked and detonated all three,v15
+rush_win_attackers_blue.mp3,Blue attackers win.,Rush ends: Blue attacked and detonated all three,v15
+rush_win_defenders_red.mp3,Red defenders win.,Rush ends: Red defended successfully,v15
+rush_win_defenders_blue.mp3,Blue defenders win.,Rush ends: Blue defended successfully,v15
+audio_enabled.mp3,Audio enabled.,A referee turns on audio on their phone,current
+speaker_test.mp3,Speaker test. Field audio is working.,The referee presses Test on the field speaker,v15

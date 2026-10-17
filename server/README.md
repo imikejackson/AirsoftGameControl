@@ -67,17 +67,15 @@ scp -r military_us_male <user>@192.168.88.129:~/airsoft-dashboard/sounds/
 ```
 
 **Any missing clip falls back to TTS**, so packs can be partial and filled in
-over time. Clip filenames the dashboard looks for:
+over time. **The full list of clips, with the exact words for each and when it
+plays, is in [voice_clips.csv](voice_clips.csv).** Rows marked `current` are
+played by today's dashboard. Rows marked `v15` are for the planned server-side
+field-speaker audio, and are ignored until that ships.
 
-| File | Spoken as |
-|------|-----------|
-| `start.mp3` | "Game on." |
-| `one_minute.mp3` | "One minute remaining." |
-| `over_red.mp3` / `over_blue.mp3` / `over_tie.mp3` | "Time! Red/Blue wins." / "…tie." |
-| `cap_<node>_<team>.mp3` | "Alpha taken by Red." — one per node × team |
-| `audio_enabled.mp3` | "Audio enabled." (played when you tap Audio) |
+Clip format: MP3, mono, 22.05 or 44.1 kHz, with the silence trimmed from both
+ends and every clip at about the same loudness, so the announcements sound like
+one voice.
 
-`<node>` is the lowercase node id (alpha, bravo, …); `<team>` is `red` or `blue`.
 The periodic state summary stays on TTS (too many phrasings to pre-render).
 
 ## Requirements
