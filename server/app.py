@@ -21,7 +21,7 @@ import paho.mqtt.client as mqtt
 
 SOUNDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sounds")
 
-DASH_VERSION = 11           # bump on every dashboard change; shown in the header
+DASH_VERSION = 12           # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -43,6 +43,25 @@ RUSH_ORDER = [("controlpoint", "alpha"),    # bomb #1 = Pink Hallway
 RUSH_FUSES = [60, 120, 180]   # bomb #1/#2/#3 fuse seconds (1/2/3 min)
 RUSH_DEFUSE_MAX = 5           # cap on the sudden-death defuse hold (s)
 
+# --- Domination scoring ------------------------------------------------------
+# Score-based King of the Hill, scored HERE from box ownership (the boxes stay
+# mode-agnostic sensors). Every box a team holds earns it 1 point every
+# DOM_TICK_S seconds. "Rubber band" catch-up: as one team's lead grows, the
+# leader's points come slower and the trailer's come faster, so a team that
+# falls behind can still claw back. DOM_CATCHUP[level] is the full-strength
+# ratio of the trailer's per-box rate to the leader's. Nothing happens until
+# the lead passes DOM_DEADZONE_PTS (so a modest lead earned by playing well is
+# never eroded by even play); beyond that it ramps in linearly over the next
+# DOM_RAMP_PTS, and is split evenly (leader / sqrt, trailer * sqrt). Holding
+# more boxes always still matters: at "medium" (2x) the trailer must hold half
+# as many boxes as the leader just to keep pace.
+DOM_TICK_S = 5.0              # base: 1 point per held box every 5 s
+DOM_DEADZONE_PTS = 20         # leads up to this are left alone
+DOM_RAMP_PTS = 30             # catch-up reaches full strength this far past the dead zone
+DOM_CATCHUP = {"off": 1.0, "low": 1.5, "medium": 2.0, "high": 3.0}
+DOM_DEFAULT_CATCHUP = "medium"
+DOM_STALE_S = 30              # a box silent this long stops scoring (matches the UI)
+
 app = Flask(__name__)
 
 _nodes = {}                 # "type/id" -> node dict
@@ -59,10 +78,22 @@ _last_rush_pub = None       # dedup for the retained per-node rush status
 #   rush      runtime state dict while a Rush round is set up, else None:
 #             {active, detonated[3], arm_s, fuses[3], sudden_death,
 #              defuse_hold_s, _defuse_start, result}
+#   catchup   Domination rubber-band strength: a DOM_CATCHUP key (referee-set)
+#   dom       Domination scores: {red, blue} (float points; shown floored),
+#             plus the current per-team rates and multipliers for display
 _game = {"running": False, "remaining_s": float(DEFAULT_DURATION_S),
          "duration_s": DEFAULT_DURATION_S, "mode": "domination",
-         "attacker": "red", "defuse_s": 0, "rush": None}
+         "attacker": "red", "defuse_s": 0, "rush": None,
+         "catchup": DOM_DEFAULT_CATCHUP, "dom": None}
 _game_lock = threading.Lock()
+
+
+def _dom_zero():
+    return {"red": 0.0, "blue": 0.0, "red_rate": 0.0, "blue_rate": 0.0,
+            "red_mult": 1.0, "blue_mult": 1.0}
+
+
+_game["dom"] = _dom_zero()
 
 
 def _broadcast(obj):
@@ -80,7 +111,14 @@ def _game_payload():
         p = {"kind": "game", "running": _game["running"],
              "remaining_s": int(round(_game["remaining_s"])),
              "duration_s": _game["duration_s"], "mode": _game["mode"],
-             "attacker": _game["attacker"], "defuse_s": _game["defuse_s"]}
+             "attacker": _game["attacker"], "defuse_s": _game["defuse_s"],
+             "catchup": _game["catchup"]}
+        d = _game["dom"]
+        p["dom"] = {"red": int(d["red"]), "blue": int(d["blue"]),
+                    "red_ppm": round(d["red_rate"] * 60, 1),
+                    "blue_ppm": round(d["blue_rate"] * 60, 1),
+                    "red_mult": round(d["red_mult"], 2),
+                    "blue_mult": round(d["blue_mult"], 2)}
         r = _game.get("rush")
         if r is not None:
             p["rush"] = {"active": r["active"], "detonated": list(r["detonated"]),
@@ -96,6 +134,10 @@ def _publish_game():
     p = _game_payload()
     node = {"running": p["running"], "remaining_s": p["remaining_s"],
             "duration_s": p["duration_s"], "mode": p["mode"]}
+    if p["mode"] == "domination":
+        # Team scores, for any box display that wants them (ignored otherwise).
+        node["score_red"] = p["dom"]["red"]
+        node["score_blue"] = p["dom"]["blue"]
     r = p.get("rush")
     if p["mode"] == "rush" and r is not None:
         a = r["active"]
@@ -184,6 +226,40 @@ def _rush_owner(active):
     with _nodes_lock:
         n = _nodes.get(f"{ntype}/{nid}")
         return (n.get("owner") if n else None)
+
+
+def _held_counts():
+    """(red, blue) number of live control points each team currently holds.
+    Offline or long-silent boxes don't score."""
+    now = time.time()
+    red = blue = 0
+    with _nodes_lock:
+        for n in _nodes.values():
+            if n.get("type") != "controlpoint" or n.get("status") == "offline":
+                continue
+            if now - n.get("last_seen", 0) > DOM_STALE_S:
+                continue
+            if n.get("owner") == "red":
+                red += 1
+            elif n.get("owner") == "blue":
+                blue += 1
+    return red, blue
+
+
+def _dom_multipliers(red_score, blue_score, catchup):
+    """Rubber band: (red_mult, blue_mult) applied to each team's per-box rate.
+    Leads up to DOM_DEADZONE_PTS are left alone; past that the leader's rate
+    drops and the trailer's rises, reaching a trailer/leader ratio of
+    DOM_CATCHUP[catchup] at a lead of DOM_DEADZONE_PTS + DOM_RAMP_PTS."""
+    swing = DOM_CATCHUP.get(catchup, 1.0)
+    excess = max(0, abs(red_score - blue_score) - DOM_DEADZONE_PTS)
+    ratio = 1.0 + (swing - 1.0) * min(1.0, excess / DOM_RAMP_PTS)
+    half = ratio ** 0.5                     # split evenly between the two teams
+    if red_score > blue_score:
+        return 1.0 / half, half
+    if blue_score > red_score:
+        return half, 1.0 / half
+    return 1.0, 1.0
 
 
 def _publish_rush_status():
@@ -285,10 +361,27 @@ def _clock_loop():
                             r["_defuse_start"] = None
                             r["defuse_hold_s"] = 0.0
 
+        # 2b) Domination: score held boxes with the rubber band applied. The
+        # lead is measured on the displayed (whole-point) scores so the rates
+        # players see match the numbers on the board.
+        if mode == "domination":
+            red_boxes, blue_boxes = _held_counts()
+            with _game_lock:
+                d = _game["dom"]
+                rm, bm = _dom_multipliers(int(d["red"]), int(d["blue"]), _game["catchup"])
+                d["red_mult"], d["blue_mult"] = rm, bm
+                d["red_rate"] = red_boxes * rm / DOM_TICK_S if running else 0.0
+                d["blue_rate"] = blue_boxes * bm / DOM_TICK_S if running else 0.0
+                d["red"] += d["red_rate"] * dt
+                d["blue"] += d["blue_rate"] * dt
+
         # 3) Publish on any meaningful change.
         with _game_lock:
             r = _game.get("rush")
+            d = _game["dom"]
             cur = (int(round(_game["remaining_s"])), _game["running"], _game["mode"],
+                   _game["catchup"], int(d["red"]), int(d["blue"]),
+                   round(d["red_rate"] * 60, 1), round(d["blue_rate"] * 60, 1),
                    (r["active"] if r else None),
                    (int(round(r["arm_s"])) if r else None),
                    (r["sudden_death"] if r else None),
@@ -368,6 +461,7 @@ def command():
                 _game["duration_s"] = max(1, int(mins * 60))
                 _game["remaining_s"] = float(_game["duration_s"])
                 _game["running"] = True
+                _game["dom"] = _dom_zero()
                 if _game["mode"] == "rush":
                     _game["rush"] = {"active": 1, "detonated": [False, False, False],
                                      "arm_s": 0.0, "fuses": list(RUSH_FUSES),
@@ -396,6 +490,14 @@ def command():
                 if not _game["running"]:
                     _game["mode"] = m
                     _game["rush"] = None
+                    _game["dom"] = _dom_zero()
+            _publish_game()
+        elif action == "setcatchup":     # domination: rubber-band strength
+            level = body.get("level", DOM_DEFAULT_CATCHUP)
+            if level not in DOM_CATCHUP:
+                return jsonify(ok=False, error="bad level"), 400
+            with _game_lock:
+                _game["catchup"] = level   # allowed mid-round (referee tuning)
             _publish_game()
         elif action == "setattacker":    # rush: which team attacks
             t = body.get("team", "red")
@@ -418,6 +520,9 @@ def command():
 
     if scope == "all":
         topic, payload = "airsoft/game/command", "reset_all"
+        with _game_lock:
+            _game["dom"] = _dom_zero()     # "zero every timer" includes the scores
+        _publish_game()
     elif scope == "node":
         ntype, nid = body.get("type"), body.get("id")
         if not ntype or not nid:
@@ -506,6 +611,10 @@ INDEX_HTML = r"""<!doctype html>
         text-transform:uppercase; font-weight:600; }
   #results .rtable td { font-size:24px; font-weight:800; font-variant-numeric:tabular-nums; }
   #results .rtable td.tm { font-size:16px; letter-spacing:.06em; }
+  #results .rtable td.sc { font-size:40px; }
+  #results .rtable td.rate { font-size:15px; font-weight:600; }
+  #results .rtable td.rate .boost { color:#ffcf5c; } #results .rtable td.rate .drag { color:#7d8794; }
+  #results .scroll { overflow-x:auto; }
   #results .r-red td { color:#ff6b6b; } #results .r-blue td { color:#6b9bff; }
   #results .rtable td.lead { text-decoration:underline; text-underline-offset:4px; }
   #results .rwin { margin-top:12px; font-size:22px; font-weight:800; letter-spacing:.04em; }
@@ -574,18 +683,26 @@ INDEX_HTML = r"""<!doctype html>
           <option value="4">4s</option><option value="5">5s</option>
         </select></label>
     </span>
-    <span id="domhint" class="modehint">King-of-the-Hill — hold the points; most cumulative time wins.</span>
+    <span id="domctl" class="ctl">
+      <label class="ctl">Catch-up
+        <select id="catchup" class="sel" title="Rubber band: trailing team scores faster, leader slower">
+          <option value="off">Off</option><option value="low">Low</option>
+          <option value="medium">Medium</option><option value="high">High</option>
+        </select></label>
+      <span id="domhint" class="modehint">Each point you hold scores every 5 s — highest score wins.
+        Catch-up speeds up the trailing team and slows the leader.</span>
+    </span>
   </div>
 </header>
 <div id="results">
   <div class="rtitle"></div>
-  <table class="rtable">
-    <thead><tr><th>Team</th><th>Total Held Time</th><th>Total Nodes Held</th></tr></thead>
+  <div class="scroll"><table class="rtable">
+    <thead><tr><th>Team</th><th>Score</th><th>Rate</th><th>Points Held</th><th>Total Held Time</th></tr></thead>
     <tbody>
-      <tr class="r-red"><td class="tm">RED</td><td class="tt"></td><td class="nn"></td></tr>
-      <tr class="r-blue"><td class="tm">BLUE</td><td class="tt"></td><td class="nn"></td></tr>
+      <tr class="r-red"><td class="tm">RED</td><td class="sc"></td><td class="rate"></td><td class="nn"></td><td class="tt"></td></tr>
+      <tr class="r-blue"><td class="tm">BLUE</td><td class="sc"></td><td class="rate"></td><td class="nn"></td><td class="tt"></td></tr>
     </tbody>
-  </table>
+  </table></div>
   <div class="rwin"></div>
 </div>
 <div id="rushpanel">
@@ -650,10 +767,12 @@ function gameStats(){
     if (d.owner==='red') redN++; else if (d.owner==='blue') blueN++; }
   return {redT, blueT, redN, blueN};
 }
-function winnerText(){ const s = gameStats();
-  if (s.redT > s.blueT) return {team:'red', say:'Red wins'};
-  if (s.blueT > s.redT) return {team:'blue', say:'Blue wins'};
-  return {team:null, say:"it's a tie"}; }
+// Domination is score-based: the server's game.dom scores decide the winner.
+function domScores(){ const d = game.dom || {}; return {red: d.red||0, blue: d.blue||0}; }
+function winnerText(){ const s = domScores();
+  if (s.red > s.blue) return {team:'red', say:'Red wins, ' + s.red + ' to ' + s.blue};
+  if (s.blue > s.red) return {team:'blue', say:'Blue wins, ' + s.blue + ' to ' + s.red};
+  return {team:null, say:"it's a tie at " + s.red}; }
 function summarize(){
   const red=[], blue=[], neu=[];
   for (const k in nodes){ const n = nodes[k]; if (n.stale) continue;
@@ -735,25 +854,42 @@ function renderGame(){
   renderResults();
   renderRush();
 }
-// End-of-game stats: aggregate held time + nodes held per team, and a winner.
+// Domination scoreboard: live team scores (with the rubber-band rate each team
+// is currently scoring at), points held, and held time; the winner when over.
+function rateHtml(ppm, mult){
+  const r = '+' + (ppm||0).toFixed(1) + '/min';
+  if (mult > 1.01) return r + ' <span class="boost">catch-up ×' + mult.toFixed(2) + '</span>';
+  if (mult < 0.99) return r + ' <span class="drag">leader ×' + mult.toFixed(2) + '</span>';
+  return r;
+}
 function renderResults(){
   if (game.mode === 'rush'){ resultsEl.style.display = 'none'; return; }  // domination only
+  const dom = game.dom || {red:0, blue:0, red_ppm:0, blue_ppm:0, red_mult:1, blue_mult:1};
   const over = !game.running && game.remaining_s < game.duration_s;
-  if (!over){ resultsEl.style.display = 'none'; return; }
   const {redT, blueT, redN, blueN} = gameStats();
   const q = s => resultsEl.querySelector(s);
   resultsEl.style.display = 'block';
-  q('.rtitle').textContent = (game.remaining_s === 0) ? 'GAME OVER — TIME!' : 'GAME STOPPED';
-  q('.r-red .tt').textContent = fmt(redT);   q('.r-red .nn').textContent = redN;
-  q('.r-blue .tt').textContent = fmt(blueT); q('.r-blue .nn').textContent = blueN;
-  q('.r-red .tt').classList.toggle('lead', redT > blueT);
-  q('.r-blue .tt').classList.toggle('lead', blueT > redT);
-  q('.r-red .nn').classList.toggle('lead', redN > blueN);
-  q('.r-blue .nn').classList.toggle('lead', blueN > redN);
-  const win = redT > blueT ? ['RED','ww-red'] : blueT > redT ? ['BLUE','ww-blue'] : null;
-  q('.rwin').innerHTML = win
-      ? ('WINNER (held time): <span class="'+win[1]+'">'+win[0]+'</span>')
-      : 'TIE on total held time';
+  q('.rtitle').textContent = game.running ? 'SCORE'
+      : (game.remaining_s === 0 ? 'GAME OVER — TIME!' : (over ? 'GAME STOPPED' : 'READY'));
+  q('.r-red .sc').textContent = dom.red;     q('.r-blue .sc').textContent = dom.blue;
+  q('.r-red .rate').innerHTML = rateHtml(dom.red_ppm, dom.red_mult);
+  q('.r-blue .rate').innerHTML = rateHtml(dom.blue_ppm, dom.blue_mult);
+  q('.r-red .nn').textContent = redN;        q('.r-blue .nn').textContent = blueN;
+  q('.r-red .tt').textContent = fmt(redT);   q('.r-blue .tt').textContent = fmt(blueT);
+  q('.r-red .sc').classList.toggle('lead', dom.red > dom.blue);
+  q('.r-blue .sc').classList.toggle('lead', dom.blue > dom.red);
+  const lead = dom.red > dom.blue ? ['RED','ww-red'] : dom.blue > dom.red ? ['BLUE','ww-blue'] : null;
+  const by = Math.abs(dom.red - dom.blue);
+  if (over) {
+    q('.rwin').innerHTML = lead
+        ? ('WINNER: <span class="'+lead[1]+'">'+lead[0]+'</span> by ' + by)
+        : 'TIE at ' + dom.red;
+  } else if (game.running) {
+    q('.rwin').innerHTML = lead
+        ? ('<span class="'+lead[1]+'">'+lead[0]+'</span> leads by ' + by) : 'Tied';
+  } else {
+    q('.rwin').textContent = '';
+  }
 }
 // Rush scoreboard: 3 bombs in sequence, the active one's arm progress, sudden
 // death, and the winner. Driven entirely by the server's game.rush state.
@@ -865,7 +1001,9 @@ minutesEl.onchange = () => sendCmd({scope:'game', action:'settime', minutes: min
 // Mode + Rush controls.
 const modeSel = document.getElementById('mode');
 const rushCtl = document.getElementById('rushctl');
-const domHint = document.getElementById('domhint');
+const domCtl = document.getElementById('domctl');
+const catchupSel = document.getElementById('catchup');
+catchupSel.onchange = () => sendCmd({scope:'game', action:'setcatchup', level: catchupSel.value});
 const attackerSel = document.getElementById('attacker');
 const defuseSel = document.getElementById('defuse');
 modeSel.onchange = () => sendCmd({scope:'game', action:'setmode', mode: modeSel.value});
@@ -883,7 +1021,8 @@ es.onmessage = (e) => {
     if (d.mode) modeSel.value = d.mode;
     const isRush = (d.mode === 'rush');
     rushCtl.style.display = isRush ? 'inline-flex' : 'none';
-    domHint.style.display = isRush ? 'none' : 'inline';
+    domCtl.style.display = isRush ? 'none' : 'inline-flex';
+    if (d.catchup) catchupSel.value = d.catchup;
     if (d.attacker) attackerSel.value = d.attacker;
     if (typeof d.defuse_s === 'number') defuseSel.value = String(d.defuse_s);
     if (audioOn) {

@@ -45,7 +45,7 @@ Every node also has a power switch, a reset button, and USB-C or barrel-jack pow
 ## 2. Where it stands now
 
 - **Firmware** (`src/`, PlatformIO, Arduino-ESP32): `FIRMWARE_VERSION` **44** in [src/config.h](src/config.h).
-- **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **11**.
+- **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **12**.
 - **Deployed:** 3 control points in sealed enclosures, each powered by a 5 V / 5 A supply
   with no USB access, so they're updated over WiFi (OTA) only:
   - `alpha` = Pink Hallway
@@ -54,7 +54,9 @@ Every node also has a power switch, a reset button, and USB-C or barrel-jack pow
   - Hostnames are `airsoft-controlpoint-<id>.local`.
   - All three run the real Field WiFi credentials (user confirmed on 2026-10-17).
 - **Game modes that work:**
-  - **Domination/King of the Hill:** cumulative per-team timers.
+  - **Domination (score-based King of the Hill, since dash v12):** each held box earns its
+    team points, with a "rubber band" catch-up so a team that falls far behind can come
+    back. Scoring runs entirely in `server/app.py` (see "Domination scoring" in §7).
   - **Rush:** sequential bomb arming. The boxes act only as ownership sensors that don't
     know the game mode; the Rush state machine runs entirely in `server/app.py`.
 - **Other features that work end to end:**
@@ -115,7 +117,7 @@ airsoft/<node_type>/<node_id>/state        # Node publishes state updates (retai
 airsoft/<node_type>/<node_id>/command      # Node subscribes for commands (reset, etc.)
 airsoft/<node_type>/<node_id>/status       # LWT online/offline (retained)
 airsoft/<node_type>/<node_id>/heartbeat    # Periodic alive signal
-airsoft/game/state                         # Game mode, run state, time remaining (retained; written by the dashboard)
+airsoft/game/state                         # Game mode, run state, time remaining, Domination team scores (retained; written by the dashboard)
 airsoft/game/command                       # Server commands to all nodes (reset_all, etc.)
 ```
 
@@ -162,8 +164,9 @@ airsoft/game/command                       # Server commands to all nodes (reset
     the countdown when a button contact flickers.
 - **Pressing your own team's button** while you already hold the point does nothing, so
   there are no accidental resets.
-- **Timers are cumulative (King of the Hill):** when a team takes a point, the other team's
-  time stays. The dashboard shows the total time per team per point.
+- **Per-box timers are cumulative:** when a team takes a point, the other team's time stays.
+  The box LCD and the dashboard tiles show each team's total time on that box. Since dash
+  v12 these times are only for information: Domination's winner is decided by score.
 
 **Reset:**
 - Resetting is always explicit and is the only way to zero the timers and make the point
@@ -180,6 +183,23 @@ airsoft/game/command                       # Server commands to all nodes (reset
    Connected. So a box that loses power in the field reconnects on its own.
 4. **Hold both team buttons for 10 s** (`COMBO_HOLD_MS`) to reopen these menus without
    rebooting. This works on sealed boxes.
+
+**Domination scoring (server-side, dash v12):**
+- Each box a team holds earns it 1 point every 5 s (`DOM_TICK_S`). The highest score when
+  time runs out wins. Offline boxes, and boxes silent for 30 s, don't score.
+- **Rubber band ("Catch-up", set from the dashboard: Off, Low, Medium, High):**
+  - Leads of up to 20 points are left alone (`DOM_DEADZONE_PTS`), so a lead earned by
+    playing well isn't worn away by even play.
+  - Beyond 20 points, the leader's points come slower and the trailer's come faster. The
+    effect reaches full strength over the next 30 points (`DOM_RAMP_PTS`).
+  - At full strength, the trailing team's per-box rate is 1.5×, 2× or 3× the leader's
+    (`DOM_CATCHUP`: Low, Medium or High). Medium is the default. The change is split evenly
+    between the two teams.
+  - Holding more boxes always matters. At Medium, a trailing team holding 1 box only keeps
+    pace with a leader holding 2.
+- Start and Reset All zero the scores. The catch-up level can be changed mid-round.
+- The team scores are also published as `score_red` and `score_blue` in
+  `airsoft/game/state`, so the box firmware could show them in the future. It doesn't yet.
 
 **Sleep:** after 10 minutes with no game running and no button presses, the box blanks its
 displays and runs a rainbow LED chase. Any button press, or a game starting, wakes it.
