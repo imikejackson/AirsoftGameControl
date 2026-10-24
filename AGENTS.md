@@ -44,7 +44,7 @@ Every node also has a power switch, a reset button, and USB-C or barrel-jack pow
 
 ## 2. Where it stands now
 
-- **Firmware** (`src/`, PlatformIO, Arduino-ESP32): `FIRMWARE_VERSION` **44** in [src/config.h](src/config.h).
+- **Firmware** (`src/`, PlatformIO, Arduino-ESP32): `FIRMWARE_VERSION` **45** in [src/config.h](src/config.h).
 - **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **16**.
 - **Deployed:** 3 control points in sealed enclosures, each powered by a 5 V / 5 A supply
   with no USB access, so they're updated over WiFi (OTA) only:
@@ -440,6 +440,18 @@ cd server && /opt/local/anaconda3/envs/airsoft/bin/python app.py   # dashboard o
 ## 12. Hardware
 
 **Gotchas, most expensive first:**
+- **FastLED is pinned to 3.10.3 in platformio.ini, and must stay pinned.** The library used
+  to be `^3.6`, so each machine built with whatever version it first downloaded.
+  - v44, built on the Linux laptop, pulled FastLED **3.10.8** (released 2026-10-18).
+  - With 3.10.8, the strips showed a frozen **full white fading to yellow**: the strip
+    misread the data timing, so every bit read as 1.
+  - That load is far beyond the 5 V / 5 A supply. It made Dark Room (charlie) brown out
+    and reboot about every minute.
+  - **3.10.5 doesn't fit**: the program is 1.35 MB against a 1.31 MB limit. The app
+    partition can only be enlarged over USB.
+  - **3.10.3** builds at about 940 KB. That matches the ~930 KB images the old Windows PC
+    produced, and it was confirmed fixed in the field on 2026-10-24 (v45).
+  - Only upgrade FastLED after testing a strip on the bench.
 - **WiFi `reason 201` (NO_AP_FOUND):** the ESP32-WROOM-**32U** has no PCB antenna, so first
   check that the IPEX antenna is attached. A 5 GHz-only SSID or a truncated SSID causes the
   same error.
