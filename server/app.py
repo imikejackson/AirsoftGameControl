@@ -29,7 +29,7 @@ import paho.mqtt.client as mqtt
 SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
 SOUNDS_DIR = os.path.join(SERVER_DIR, "sounds")
 
-DASH_VERSION = 14           # bump on every dashboard change; shown in the header
+DASH_VERSION = 15           # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -242,6 +242,11 @@ def _on_message(client, userdata, msg):
             for f in ("owner", "red_s", "blue_s", "ip", "rssi"):
                 if f in d:
                     n[f] = d[f]
+            # Worst WiFi signal seen since the round started (reset on Start),
+            # so referees can spot a box that dips when players crowd it.
+            if isinstance(d.get("rssi"), int):
+                lo = n.get("rssi_min")
+                n["rssi_min"] = d["rssi"] if lo is None else min(lo, d["rssi"])
             # When owner/times change, restart the extrapolation clock (the Rush
             # arm timer, like the UI, ticks base + elapsed-since-this-moment).
             if (n.get("owner"), n.get("red_s"), n.get("blue_s")) != prev:
@@ -571,6 +576,9 @@ def command():
                 else:
                     _game["rush"] = None
             _client.publish("airsoft/game/command", "reset_all", qos=1, retain=False)
+            with _nodes_lock:                 # new round: track worst signal afresh
+                for n in _nodes.values():
+                    n["rssi_min"] = n.get("rssi")
             _publish_game()
         elif action == "stop":           # freeze everything
             with _game_lock:
@@ -735,6 +743,12 @@ INDEX_HTML = r"""<!doctype html>
   .foot { padding:8px 14px; font-size:12px; color:#7d8794; display:flex;
           align-items:center; justify-content:space-between; border-top:1px solid #262b33; }
   .foot .cap { color:#ffcf5c; font-weight:600; }
+  /* WiFi signal (referee only): good >= -67 dBm, fair to -75, weak below. */
+  .foot .sig { font-variant-numeric:tabular-nums; margin-left:auto; margin-right:10px; }
+  .foot .sig.good, .foot .sig .good { color:#46d160; }
+  .foot .sig.fair, .foot .sig .fair { color:#ffcf5c; }
+  .foot .sig.weak, .foot .sig .weak { color:#ff5c5c; }
+  .foot .sig .worst { color:#7d8794; }
   button.reset { font:inherit; font-size:11px; color:#cdd3da; background:transparent;
         border:1px solid #3a414c; border-radius:6px; padding:3px 8px; cursor:pointer; }
   button.reset:hover { background:#2a2f37; }
@@ -1121,7 +1135,7 @@ function ensureTile(key){
     </div>
     <div class="row red"><span class="lbl">RED</span><span class="t rt">0:00</span></div>
     <div class="row blue"><span class="lbl">BLUE</span><span class="t bt">0:00</span></div>
-    <div class="foot"><span class="cap"></span><button class="reset refonly">Reset</button></div>
+    <div class="foot"><span class="cap"></span><span class="sig refonly"></span><button class="reset refonly">Reset</button></div>
     <div class="lcdsim"><canvas width="320" height="240"></canvas><div class="cap2"></div></div>`;
   grid.appendChild(el);
   return el;
@@ -1189,6 +1203,17 @@ simSel.onchange = () => { simMode = simSel.value;
   try { localStorage.setItem('simMode', simMode); } catch(e){}
   document.body.classList.toggle('sim', simMode !== 'off'); render(); };
 
+// WiFi signal for referees: current RSSI (colored) plus the worst seen this
+// round. Thresholds: >= -67 dBm solid, -67..-75 marginal, below -75 weak.
+function sigClass(r){ return r >= -67 ? 'good' : (r >= -75 ? 'fair' : 'weak'); }
+function renderSignal(el, n){
+  const r = n.data.rssi, lo = n.data.rssi_min;
+  if (n.stale || typeof r !== 'number'){ el.className = 'sig refonly'; el.textContent = ''; return; }
+  el.className = 'sig refonly ' + sigClass(r);
+  el.innerHTML = 'WiFi ' + r + (typeof lo === 'number' && lo < r
+      ? ' <span class="worst">(worst <span class="' + sigClass(lo) + '">' + lo + '</span>)</span>' : '');
+}
+
 function render(){
   const now = Date.now();
   for (const key in nodes){
@@ -1205,6 +1230,7 @@ function render(){
     bRow.classList.toggle('own', n.data.owner === 'blue' && !n.stale);
     el.querySelector('.rt').textContent = fmt(liveSecs(n,'red'));
     el.querySelector('.bt').textContent = fmt(liveSecs(n,'blue'));
+    renderSignal(el.querySelector('.sig'), n);
     el.querySelector('.cap').textContent = (!n.stale && n.data.owner && n.data.owner!=='none')
         ? ('held by ' + n.data.owner) : (n.stale ? 'offline' : 'neutral');
     if (simMode !== 'off') drawBoxScreen(el.querySelector('.lcdsim canvas'), n, simMode);

@@ -45,7 +45,7 @@ Every node also has a power switch, a reset button, and USB-C or barrel-jack pow
 ## 2. Where it stands now
 
 - **Firmware** (`src/`, PlatformIO, Arduino-ESP32): `FIRMWARE_VERSION` **44** in [src/config.h](src/config.h).
-- **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **14**.
+- **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **15**.
 - **Deployed:** 3 control points in sealed enclosures, each powered by a 5 V / 5 A supply
   with no USB access, so they're updated over WiFi (OTA) only:
   - `alpha` = Pink Hallway
@@ -221,6 +221,20 @@ airsoft/game/command                       # Server commands to all nodes (reset
 - **Lockout:** after 5 wrong PINs, that device is locked out for 60 s.
 - The site is plain HTTP, so someone capturing WiFi traffic could read the PIN. That was
   accepted as good enough for a game.
+
+**WiFi signal on referee tiles (dash v15):**
+- Each box tile on `/ref` shows its current signal from the 12 s heartbeat, colored green
+  at -67 dBm or better, yellow from -67 to -75, and red below -75.
+- Once the signal has dipped, the tile also shows the **worst** reading since the round
+  started. The server tracks this and resets it on Start.
+- Players don't see it.
+- **Field reference (2026-10-23):** all three boxes read -47 to -56 dBm on the field WiFi
+  (`10.0.0.x`, server at `10.0.0.84`).
+- **Antenna extension test (2026-10-24):** the user's Gigabyte extension cable, with a
+  hand-made wire joint, cost about 0–2 dB compared with the antenna directly on the board.
+  The joint must be secured, because readings shifted when it was handled. The thin coax on
+  these small antenna connectors loses about 3–4 dB per meter, so mount the antenna on the
+  box wall with an RP-SMA bulkhead rather than running long cable.
 
 **Box screen simulator (dash v13):** the dashboard's "Box screens" control (or a
 `?sim=time` / `?sim=score` link) draws an approximate copy of each box's 320×240 LCD on its
