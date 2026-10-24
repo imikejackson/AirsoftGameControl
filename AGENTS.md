@@ -45,7 +45,7 @@ Every node also has a power switch, a reset button, and USB-C or barrel-jack pow
 ## 2. Where it stands now
 
 - **Firmware** (`src/`, PlatformIO, Arduino-ESP32): `FIRMWARE_VERSION` **44** in [src/config.h](src/config.h).
-- **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **15**.
+- **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **16**.
 - **Deployed:** 3 control points in sealed enclosures, each powered by a 5 V / 5 A supply
   with no USB access, so they're updated over WiFi (OTA) only:
   - `alpha` = Pink Hallway
@@ -221,6 +221,26 @@ airsoft/game/command                       # Server commands to all nodes (reset
 - **Lockout:** after 5 wrong PINs, that device is locked out for 60 s.
 - The site is plain HTTP, so someone capturing WiFi traffic could read the PIN. That was
   accepted as good enough for a game.
+
+**Connection monitoring (dash v16):** the server tracks whether each box stays connected.
+Added because the user suspects Dark Room (charlie) drops off. It records:
+- **offline:** the broker delivered the box's last-will message.
+- **silent:** no message from the box for 30 s (`CONN_SILENT_S`); heartbeats come every
+  12 s.
+- **back:** the box was heard from again after offline or silent, with the downtime.
+- **reboot:** the box's heartbeat uptime went backwards.
+- **weak / signal ok:** the signal dropped below -75 dBm, or recovered above -70. The gap
+  between the two stops a borderline box from flooding the log.
+
+Retained messages, which the broker replays when the dashboard starts, never count as proof
+that a box is alive.
+
+Where to see it:
+- Each referee tile shows this round's drops, reboots and offline time, plus a live "DOWN"
+  while a box is out. Start resets the counters.
+- `/ref` has a **Connection log** panel, fed by `/api/connlog` (referee only).
+- Every event is appended to `server/logs/connections.log` (gitignored; on the server it's
+  `~/airsoft-dashboard/logs/`), so a whole game day can be reviewed later.
 
 **WiFi signal on referee tiles (dash v15):**
 - Each box tile on `/ref` shows its current signal from the 12 s heartbeat, colored green

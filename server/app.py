@@ -20,7 +20,8 @@ import queue
 import secrets
 import threading
 import time
-from datetime import timedelta
+from collections import deque
+from datetime import datetime, timedelta
 
 from flask import (Flask, Response, request, jsonify, abort, redirect,
                    send_from_directory, render_template_string, session)
@@ -29,7 +30,7 @@ import paho.mqtt.client as mqtt
 SERVER_DIR = os.path.dirname(os.path.abspath(__file__))
 SOUNDS_DIR = os.path.join(SERVER_DIR, "sounds")
 
-DASH_VERSION = 15           # bump on every dashboard change; shown in the header
+DASH_VERSION = 16           # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"
@@ -50,6 +51,22 @@ RUSH_ORDER = [("controlpoint", "alpha"),    # bomb #1 = Pink Hallway
               ("controlpoint", "charlie")]  # bomb #3 = Dark Room
 RUSH_FUSES = [60, 120, 180]   # bomb #1/#2/#3 fuse seconds (1/2/3 min)
 RUSH_DEFUSE_MAX = 5           # cap on the sudden-death defuse hold (s)
+
+# --- Connection monitoring ---------------------------------------------------
+# Tracks whether each box stays connected, so a flaky box (bad antenna spot,
+# weak power) shows up as data instead of a hunch. Events go to the referee
+# page live and are appended to logs/connections.log (survives restarts).
+#   offline  broker delivered the box's Last Will (it dropped off MQTT)
+#   silent   no message from the box for CONN_SILENT_S (heartbeat is ~12 s)
+#   back     the box is heard from again after offline/silent (+ downtime)
+#   reboot   the box's uptime counter went backwards (power blip / crash)
+#   weak / signal ok   RSSI crossed below CONN_WEAK_DBM / back above CONN_OK_DBM
+CONN_SILENT_S = 30
+CONN_WEAK_DBM = -75
+CONN_OK_DBM = -70             # hysteresis so a borderline box doesn't spam the log
+CONN_LOG_DIR = os.path.join(SERVER_DIR, "logs")
+CONN_LOG_FILE = os.path.join(CONN_LOG_DIR, "connections.log")
+_connlog = deque(maxlen=300)  # recent events for the referee page
 
 # --- Domination scoring ------------------------------------------------------
 # Score-based King of the Hill, scored HERE from box ownership (the boxes stay
@@ -203,10 +220,47 @@ def _touch(ntype, nid):
     if n is None:
         n = {"type": ntype, "id": nid, "owner": "none", "red_s": 0,
              "blue_s": 0, "status": "online", "rssi": None, "ip": None,
-             "arrival": time.time()}
+             "arrival": time.time(),
+             # connection stats for the current round (reset on Start)
+             "drops": 0, "reboots": 0, "down_s": 0.0,
+             "down_since": None, "down_reason": None, "last_live": None}
         _nodes[key] = n
     n["last_seen"] = time.time()
     return n
+
+
+def _log_conn(n, event, detail=""):
+    """Record a connection event: in memory, on disk, and live to referees.
+    Called with _nodes_lock held (n is a node dict) or n=None for markers."""
+    now = time.time()
+    e = {"t": now, "node": (n["id"] if n else "-"), "event": event, "detail": detail,
+         "rssi": (n.get("rssi") if n else None)}
+    _connlog.append(e)
+    try:
+        os.makedirs(CONN_LOG_DIR, exist_ok=True)
+        with open(CONN_LOG_FILE, "a") as f:
+            stamp = datetime.fromtimestamp(now).strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"{stamp}  {e['node']:<10} {event:<10} {detail}"
+                    f"{'  rssi ' + str(e['rssi']) if e['rssi'] is not None else ''}\n")
+    except OSError as err:
+        print(f"[dash] can't write {CONN_LOG_FILE}: {err}")
+    print(f"[conn] {e['node']} {event} {detail}")
+    _broadcast({"kind": "connlog", **e})
+
+
+def _mark_down(n, reason, now):
+    if n.get("down_since") is None:
+        n["down_since"], n["down_reason"] = now, reason
+        n["drops"] = n.get("drops", 0) + 1
+
+
+def _mark_up(n, now):
+    since = n.get("down_since")
+    if since is not None:
+        gone = now - since
+        n["down_s"] = n.get("down_s", 0.0) + gone
+        n["down_since"] = n["down_reason"] = None
+        _log_conn(n, "back", f"after {int(gone)} s")
 
 
 def _on_connect(client, userdata, flags, rc, *args):
@@ -228,9 +282,20 @@ def _on_message(client, userdata, msg):
     if kind not in ("status", "state", "heartbeat"):
         return
     payload = msg.payload.decode("utf-8", "ignore").strip()
+    # Retained messages are the broker replaying a box's LAST message (e.g. when
+    # the dashboard starts) — they say nothing about whether it is alive now.
+    live = not msg.retain
+    now = time.time()
 
     with _nodes_lock:
         n = _touch(ntype, nid)
+        if kind == "status" and payload == "offline":
+            if live and n.get("down_since") is None:
+                _mark_down(n, "offline", now)
+                _log_conn(n, "offline", "dropped off MQTT (last will)")
+        elif live:
+            _mark_up(n, now)
+            n["last_live"] = now
         if kind == "status":
             n["status"] = payload or "online"
         elif kind in ("state", "heartbeat"):
@@ -238,6 +303,21 @@ def _on_message(client, userdata, msg):
                 d = json.loads(payload)
             except ValueError:
                 d = {}
+            if live and kind == "heartbeat" and isinstance(d.get("uptime_s"), int):
+                prev_up = n.get("uptime_s")
+                if prev_up is not None and d["uptime_s"] < prev_up:
+                    n["reboots"] = n.get("reboots", 0) + 1
+                    _log_conn(n, "reboot", f"uptime {prev_up} s -> {d['uptime_s']} s")
+                n["uptime_s"] = d["uptime_s"]
+            if live and isinstance(d.get("rssi"), int):
+                if d["rssi"] < CONN_WEAK_DBM and not n.get("weak"):
+                    n["weak"] = True
+                    n["rssi"] = d["rssi"]
+                    _log_conn(n, "weak", f"signal {d['rssi']} dBm")
+                elif d["rssi"] >= CONN_OK_DBM and n.get("weak"):
+                    n["weak"] = False
+                    n["rssi"] = d["rssi"]
+                    _log_conn(n, "signal ok", f"signal {d['rssi']} dBm")
             prev = (n.get("owner"), n.get("red_s"), n.get("blue_s"))
             for f in ("owner", "red_s", "blue_s", "ip", "rssi"):
                 if f in d:
@@ -434,6 +514,20 @@ def _clock_loop():
                 d["red"] += d["red_rate"] * dt
                 d["blue"] += d["blue_rate"] * dt
 
+        # 2c) Connection watchdog: a box heard from recently that has gone
+        # quiet for CONN_SILENT_S is counted as dropped (catches WiFi loss
+        # before the broker's Last Will fires, and boxes with no LWT at all).
+        stale = []
+        with _nodes_lock:
+            for n in _nodes.values():
+                ll = n.get("last_live")
+                if ll is not None and n.get("down_since") is None and now - ll > CONN_SILENT_S:
+                    _mark_down(n, "silent", ll)   # count the downtime from last contact
+                    _log_conn(n, "silent", f"no message for {int(now - ll)} s")
+                    stale.append(dict(n))
+        for snap in stale:
+            _broadcast(snap)
+
         # 3) Publish on any meaningful change.
         with _game_lock:
             r = _game.get("rush")
@@ -498,6 +592,15 @@ def ref():
     resp = Response(render_template_string(LOGIN_HTML, ver=DASH_VERSION, error=error))
     resp.headers["Cache-Control"] = "no-store"
     return resp
+
+
+@app.route("/api/connlog")
+def connlog():
+    """Recent connection events (newest last), referee only."""
+    if not _is_ref():
+        return jsonify(ok=False, error="referee login required"), 403
+    with _nodes_lock:
+        return jsonify(list(_connlog))
 
 
 @app.route("/ref/logout")
@@ -576,9 +679,13 @@ def command():
                 else:
                     _game["rush"] = None
             _client.publish("airsoft/game/command", "reset_all", qos=1, retain=False)
-            with _nodes_lock:                 # new round: track worst signal afresh
+            with _nodes_lock:                 # new round: fresh signal + connection stats
                 for n in _nodes.values():
                     n["rssi_min"] = n.get("rssi")
+                    n["drops"], n["reboots"], n["down_s"] = 0, 0, 0.0
+                    if n.get("down_since") is not None:
+                        n["down_since"] = time.time()   # still down: count from round start
+                _log_conn(None, "round", "started — counters reset")
             _publish_game()
         elif action == "stop":           # freeze everything
             with _game_lock:
@@ -749,6 +856,21 @@ INDEX_HTML = r"""<!doctype html>
   .foot .sig.fair, .foot .sig .fair { color:#ffcf5c; }
   .foot .sig.weak, .foot .sig .weak { color:#ff5c5c; }
   .foot .sig .worst { color:#7d8794; }
+  /* Connection stats per tile + the connection log panel (referee only). */
+  .conn { padding:6px 14px 8px; font-size:12px; color:#7d8794; font-variant-numeric:tabular-nums; }
+  .conn.bad { color:#ffcf5c; } .conn .down { color:#ff5c5c; font-weight:700; }
+  #connpanel { margin:0 18px 18px; padding:14px 18px; border-radius:12px; background:#15181d;
+        border:1px solid #262b33; }
+  #connpanel .ctitle { font-size:13px; letter-spacing:.22em; font-weight:800; color:#ffcf5c; }
+  #connpanel .chint { font-size:12px; color:#7d8794; margin:4px 0 8px; }
+  #connpanel .clist { max-height:320px; overflow:auto; font-size:13px; font-variant-numeric:tabular-nums; }
+  #connpanel .crow { display:flex; gap:12px; padding:4px 0; border-bottom:1px solid #20242b; }
+  #connpanel .crow .ct { color:#7d8794; min-width:68px; }
+  #connpanel .crow .cn { min-width:110px; font-weight:600; }
+  #connpanel .crow .ce { min-width:76px; font-weight:700; }
+  #connpanel .ev-offline, #connpanel .ev-silent, #connpanel .ev-reboot { color:#ff5c5c; }
+  #connpanel .ev-weak { color:#ffcf5c; } #connpanel .ev-back, #connpanel .ev-ok { color:#46d160; }
+  #connpanel .ev-round { color:#6b9bff; }
   button.reset { font:inherit; font-size:11px; color:#cdd3da; background:transparent;
         border:1px solid #3a414c; border-radius:6px; padding:3px 8px; cursor:pointer; }
   button.reset:hover { background:#2a2f37; }
@@ -895,6 +1017,12 @@ INDEX_HTML = r"""<!doctype html>
   </div>
 </div>
 <div id="grid"><div class="empty">Waiting for nodes to report…</div></div>
+<div id="connpanel" class="refonly">
+  <div class="ctitle">CONNECTION LOG</div>
+  <div class="chint">Drops (box went offline or silent for 30 s), reboots, and weak signal (below -75 dBm).
+    Saved on the server in logs/connections.log.</div>
+  <div class="clist"><div class="crow"><span class="ct"></span><span>No events yet.</span></div></div>
+</div>
 
 <script>
 const IS_REF = {{ 'true' if ref else 'false' }};   // referee page (vs player view)
@@ -1136,6 +1264,7 @@ function ensureTile(key){
     <div class="row red"><span class="lbl">RED</span><span class="t rt">0:00</span></div>
     <div class="row blue"><span class="lbl">BLUE</span><span class="t bt">0:00</span></div>
     <div class="foot"><span class="cap"></span><span class="sig refonly"></span><button class="reset refonly">Reset</button></div>
+    <div class="conn refonly"></div>
     <div class="lcdsim"><canvas width="320" height="240"></canvas><div class="cap2"></div></div>`;
   grid.appendChild(el);
   return el;
@@ -1214,6 +1343,38 @@ function renderSignal(el, n){
       ? ' <span class="worst">(worst <span class="' + sigClass(lo) + '">' + lo + '</span>)</span>' : '');
 }
 
+// Per-tile connection stats for this round, plus a live "DOWN m:ss" while out.
+function renderConn(el, n){
+  const d = n.data, drops = d.drops||0, reboots = d.reboots||0;
+  let down = d.down_s||0, live = '';
+  if (d.down_since){
+    const cur = Date.now()/1000 - d.down_since; down += cur;
+    live = ' · <span class="down">DOWN ' + fmt(cur) + ' (' + (d.down_reason||'') + ')</span>';
+  }
+  el.className = 'conn refonly' + (drops || reboots ? ' bad' : '');
+  el.innerHTML = 'This round: ' + drops + (drops===1?' drop':' drops') + ' · '
+      + reboots + (reboots===1?' reboot':' reboots') + ' · offline ' + fmt(down) + live;
+}
+// Connection log panel (referee only): newest first, last 100 events.
+const connEvents = [];
+const EV_CLASS = {offline:'ev-offline', silent:'ev-silent', reboot:'ev-reboot', weak:'ev-weak',
+                  back:'ev-back', 'signal ok':'ev-ok', round:'ev-round'};
+function clock(t){ const d = new Date(t*1000);
+  return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'}); }
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function renderConnLog(){
+  const list = document.querySelector('#connpanel .clist');
+  if (!connEvents.length) return;
+  list.innerHTML = connEvents.slice(-100).reverse().map(e =>
+    '<div class="crow"><span class="ct">' + clock(e.t) + '</span><span class="cn">'
+    + esc(e.node === '-' ? '—' : nodeName(e.node)) + '</span><span class="ce ' + (EV_CLASS[e.event]||'') + '">'
+    + esc(e.event) + '</span><span>' + esc(e.detail||'')
+    + (e.rssi != null && e.node !== '-' ? ' <span class="ct">(' + e.rssi + ' dBm)</span>' : '')
+    + '</span></div>').join('');
+}
+if (IS_REF) fetch('/api/connlog').then(r => r.ok ? r.json() : []).then(list => {
+  connEvents.push(...list); renderConnLog(); }).catch(() => {});
+
 function render(){
   const now = Date.now();
   for (const key in nodes){
@@ -1231,6 +1392,7 @@ function render(){
     el.querySelector('.rt').textContent = fmt(liveSecs(n,'red'));
     el.querySelector('.bt').textContent = fmt(liveSecs(n,'blue'));
     renderSignal(el.querySelector('.sig'), n);
+    renderConn(el.querySelector('.conn'), n);
     el.querySelector('.cap').textContent = (!n.stale && n.data.owner && n.data.owner!=='none')
         ? ('held by ' + n.data.owner) : (n.stale ? 'offline' : 'neutral');
     if (simMode !== 'off') drawBoxScreen(el.querySelector('.lcdsim canvas'), n, simMode);
@@ -1274,6 +1436,10 @@ es.onopen = () => statusEl.textContent = 'live';
 es.onerror = () => statusEl.textContent = 'reconnecting…';
 es.onmessage = (e) => {
   const d = JSON.parse(e.data);
+  if (d.kind === 'connlog') {           // connection event (shown to referees only)
+    if (IS_REF) { connEvents.push(d); renderConnLog(); }
+    return;
+  }
   if (d.kind === 'game') {
     const prev = game;
     // Sync the referee controls to the authoritative server state.

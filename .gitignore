@@ -16,3 +16,5 @@ field-guide.svg
 
 # Referee PIN for the dashboard (server/app.py) — never commit.
 server/ref_pin.txt
+# Dashboard connection logs (server/app.py) — runtime data.
+server/logs/
