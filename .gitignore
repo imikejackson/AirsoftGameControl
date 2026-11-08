@@ -18,3 +18,4 @@ field-guide.svg
 server/ref_pin.txt
 # Dashboard connection logs (server/app.py) — runtime data.
 server/logs/
+__pycache__/

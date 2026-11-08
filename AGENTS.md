@@ -45,7 +45,7 @@ Every node also has a power switch, a reset button, and USB-C or barrel-jack pow
 ## 2. Where it stands now
 
 - **Firmware** (`src/`, PlatformIO, Arduino-ESP32): `FIRMWARE_VERSION` **45** in [src/config.h](src/config.h).
-- **Server** ([server/app.py](server/app.py), a single Flask + paho-mqtt + SSE file): `DASH_VERSION` **16**.
+- **Server** ([server/](server/): Flask + paho-mqtt + SSE, split into the `airsoft/` package since dash v17): `DASH_VERSION` **17**.
 - **Deployed:** 3 control points in sealed enclosures, each powered by a 5 V / 5 A supply
   with no USB access, so they're updated over WiFi (OTA) only:
   - `alpha` = Pink Hallway
@@ -320,7 +320,21 @@ src/
   leds.cpp/.h                # WS2812B strip (FastLED)
   statusled.cpp/.h           # onboard status pixel (FastLED)
 server/
-  app.py                     # dashboard, game clock, Rush logic
+  app.py                     # entry point: starts the MQTT bridge, clock, and web server
+  airsoft/
+    config.py                # versions, ports, box display names
+    hub.py                   # shared state: boxes, game dict, SSE broadcast, publish_game()
+    boxes.py                 # box MQTT messages -> box state
+    connmon.py               # connection monitoring + logs/connections.log
+    bridge.py                # MQTT client loop
+    auth.py                  # referee PIN login
+    clock.py                 # game clock loop: countdown, mode tick, watchdog, publish
+    web.py                   # Flask routes and the /api/command handler
+    modes/                   # one module per game mode, all subclasses of modes.Mode
+      domination.py          #   score-based King of the Hill + catch-up
+      rush.py                #   sequential bomb arming
+  templates/                 # dashboard.html (player + referee), login.html
+  tests/smoke_test.py        # end-to-end test against a running bench server
   deploy.sh                  # server install script
   README.md
 platformio.ini               # one environment per node type, plus OTA
@@ -377,10 +391,20 @@ pio run -e esp32dev                                    # build control-point fir
 pio run -e esp32dev -t upload --upload-port <COMx|/dev/ttyUSBx>        # USB (bench)
 pio run -e esp32dev_ota -t upload --upload-port airsoft-controlpoint-<id>.local   # OTA (deployed)
 pio device monitor                                     # serial monitor, 115200 baud
-scp server/app.py airsoft@airsoft-pi.local:~/airsoft-dashboard/app.py
+scp -r server/app.py server/airsoft server/templates airsoft@airsoft-pi.local:~/airsoft-dashboard/
 scp server/ref_pin.txt airsoft@airsoft-pi.local:~/airsoft-dashboard/ref_pin.txt   # referee PIN (gitignored)
-ssh airsoft@airsoft-pi.local 'sudo systemctl restart airsoft-dashboard'
+ssh airsoft@airsoft-pi.local 'kill $(systemctl show airsoft-dashboard -p MainPID --value)'
 ```
+
+- **Restarting the dashboard needs no sudo.** The service runs as `airsoft` with
+  `Restart=always`, so killing its process makes systemd start it again within 3 s, on the
+  new code. Don't kill it during a game, because that clears the clock. The server account's
+  sudo password was forgotten in 2026-10, and resetting it needs a console in recovery mode.
+- **Since dash v17 the server is a package,** so copy `app.py`, `airsoft/` and `templates/`
+  together.
+- **Before deploying server changes,** run `server/tests/smoke_test.py --full` against a
+  bench broker and dashboard (§10, local test server). Every check must pass. Never run it
+  against the field server during a game: it creates fake boxes and starts rounds.
 
 The PlatformIO toolbar in VS Code does the same jobs: the checkmark builds, the arrow
 uploads over USB, and the plug opens the serial monitor.
