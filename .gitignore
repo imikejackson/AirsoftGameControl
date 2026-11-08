@@ -19,3 +19,7 @@ server/ref_pin.txt
 # Dashboard connection logs (server/app.py) — runtime data.
 server/logs/
 __pycache__/
+# Dashboard runtime state (referee audio settings) and generated voice clips
+# (rebuild with server/tools/make_clips.py).
+server/state/
+server/sounds/

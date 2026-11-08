@@ -54,8 +54,9 @@ class Mode:
 
 from .domination import Domination  # noqa: E402
 from .rush import Rush              # noqa: E402
+from .timer import Timer            # noqa: E402
 
-ALL = [Domination(), Rush()]
+ALL = [Domination(), Rush(), Timer()]
 BY_NAME = {m.name: m for m in ALL}
 
 

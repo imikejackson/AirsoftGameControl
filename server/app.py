@@ -11,16 +11,17 @@ Open http://<server>:8080  (e.g. http://airsoft-pi.local:8080).
   /      read-only PLAYER view — anyone
   /ref   REFEREE page with the game controls — needs the 6-digit PIN
 
-Deploy: copy the whole server/ folder (app.py, airsoft/, templates/), not just
-this file.
+Deploy: copy app.py, airsoft/, templates/, voice_clips.csv and sounds/field/
+together (see AGENTS.md section 10), not just this file.
 """
 import threading
 
-from airsoft import bridge, clock, config
+from airsoft import audio, bridge, clock, config
 from airsoft.web import app
 
 if __name__ == "__main__":
     threading.Thread(target=bridge.run, daemon=True).start()
     threading.Thread(target=clock.run, daemon=True).start()
+    audio.start()
     print(f"[dash] serving on http://0.0.0.0:{config.HTTP_PORT}")
     app.run(host="0.0.0.0", port=config.HTTP_PORT, threaded=True)

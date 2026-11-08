@@ -68,9 +68,16 @@ scp -r military_us_male <user>@192.168.88.129:~/airsoft-dashboard/sounds/
 
 **Any missing clip falls back to TTS**, so packs can be partial and filled in
 over time. **The full list of clips, with the exact words for each and when it
-plays, is in [voice_clips.csv](voice_clips.csv).** Rows marked `current` are
-played by today's dashboard. Rows marked `v15` are for the planned server-side
-field-speaker audio, and are ignored until that ships.
+plays, is in [voice_clips.csv](voice_clips.csv).** Its `used_by` column says
+which part plays each one:
+
+- `browser`: phones playing `<clip>.mp3` from a voice pack.
+- `speaker`: the server's field speaker playing `sounds/field/<clip>.wav`
+  (dash v18; see AGENTS.md section 7).
+- `both`: either.
+- `planned`: not wired up yet.
+
+Generate the speaker WAVs with `tools/make_clips.py`.
 
 Clip format: MP3, mono, 22.05 or 44.1 kHz, with the silence trimmed from both
 ends and every clip at about the same loudness, so the announcements sound like

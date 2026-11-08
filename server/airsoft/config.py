@@ -5,7 +5,7 @@ SERVER_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOUNDS_DIR = os.path.join(SERVER_DIR, "sounds")
 TEMPLATES_DIR = os.path.join(SERVER_DIR, "templates")
 
-DASH_VERSION = 17           # bump on every dashboard change; shown in the header
+DASH_VERSION = 18           # bump on every dashboard change; shown in the header
 MQTT_HOST = "localhost"
 MQTT_PORT = 1883
 TOPIC = "airsoft/#"

@@ -161,12 +161,14 @@
       <select id="mode" class="sel" title="Game mode">
         <option value="domination">Domination</option>
         <option value="rush">Rush</option>
+        <option value="timer">Timer</option>
       </select></label>
     <label class="ctl refonly"><input id="minutes" type="number" min="1" max="120" value="15"> min</label>
     <button class="btn go refonly" id="startStop">Start</button>
     <button class="btn danger refonly" id="resetAll">Reset All</button>
     <select id="pack" class="sel refonly" title="Voice pack"><option value="">Browser voice</option></select>
     <button class="btn refonly" id="audioBtn">🔇 Audio</button>
+    <a class="reflink refonly" href="/ref/timer" title="Game timer and field-speaker announcements">Timer &amp; audio</a>
     <a class="reflink refonly" href="/" title="Open the player scoreboard">Player view</a>
     <a class="reflink refonly" href="/ref/logout">Log out</a>
     <label class="ctl refonly" title="Show a simulated copy of each box's LCD on its tile">Box screens
@@ -382,7 +384,7 @@ function rateHtml(ppm, mult){
   return r;
 }
 function renderResults(){
-  if (game.mode === 'rush'){ resultsEl.style.display = 'none'; return; }  // domination only
+  if (game.mode !== 'domination'){ resultsEl.style.display = 'none'; return; }  // domination only
   const dom = game.dom || {red:0, blue:0, red_ppm:0, blue_ppm:0, red_mult:1, blue_mult:1};
   const over = !game.running && game.remaining_s < game.duration_s;
   const {redT, blueT, redN, blueN} = gameStats();
@@ -645,6 +647,7 @@ es.onopen = () => statusEl.textContent = 'live';
 es.onerror = () => statusEl.textContent = 'reconnecting…';
 es.onmessage = (e) => {
   const d = JSON.parse(e.data);
+  if (d.kind === 'audio' || d.kind === 'announcer') return;   // for the timer page
   if (d.kind === 'connlog') {           // connection event (shown to referees only)
     if (IS_REF) { connEvents.push(d); renderConnLog(); }
     return;
@@ -655,9 +658,9 @@ es.onmessage = (e) => {
     if (d.mode) modeSel.value = d.mode;
     const isRush = (d.mode === 'rush');
     rushCtl.style.display = isRush ? 'inline-flex' : 'none';
-    domCtl.style.display = isRush ? 'none' : 'inline-flex';
+    domCtl.style.display = (d.mode === 'domination') ? 'inline-flex' : 'none';
     if (d.catchup) catchupSel.value = d.catchup;
-    document.getElementById('modeTxt').textContent = isRush ? 'RUSH' : 'DOMINATION';
+    document.getElementById('modeTxt').textContent = (d.mode || 'domination').toUpperCase();
     document.getElementById('catchupTxt').textContent =
         'Catch-up: ' + cap(d.catchup || 'off') + ' — a team that falls far behind scores faster.';
     if (d.attacker) attackerSel.value = d.attacker;
@@ -673,7 +676,7 @@ es.onmessage = (e) => {
           if (nr.result && !pr.result)
             say(nr.result === 'attackers' ? cap(atk)+' attackers win.' : cap(def)+' defenders win.');
         }
-      } else {
+      } else if (d.mode === 'domination') {
         const mins = Math.round(d.duration_s/60);
         if (!prev.running && d.running) {
           announce('start', 'Game on. ' + mins + (mins===1?' minute.':' minutes.'), 'blue');

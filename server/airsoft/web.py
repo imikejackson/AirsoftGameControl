@@ -14,7 +14,7 @@ from datetime import timedelta
 from flask import (Flask, Response, abort, jsonify, redirect, render_template,
                    request, send_from_directory, session)
 
-from . import auth, config, connmon, hub, modes
+from . import announcer, audio, auth, config, connmon, hub, modes
 
 app = Flask(__name__, template_folder=config.TEMPLATES_DIR)
 app.secret_key = os.urandom(32)
@@ -116,14 +116,20 @@ def _game_command(action, body):
             g["duration_s"] = max(1, int(mins * 60))
             g["remaining_s"] = float(g["duration_s"])
             g["running"] = True
+            g["round"] = g.get("round", 0) + 1   # tells the announcer a round began
             for m in modes.ALL:
                 m.on_start(g, active=(m.name == g["mode"]))
         hub.publish("airsoft/game/command", "reset_all")
         connmon.new_round()
         hub.publish_game()
-    elif action == "stop":               # freeze everything
+    elif action == "stop":               # freeze everything (pause)
         with hub.game_lock:
             hub.game["running"] = False
+        hub.publish_game()
+    elif action == "resume":             # continue a paused round, no reset
+        with hub.game_lock:
+            if hub.game["remaining_s"] > 0:
+                hub.game["running"] = True
         hub.publish_game()
     elif action == "settime":            # set duration (and idle countdown)
         with hub.game_lock:
@@ -151,6 +157,49 @@ def _game_command(action, body):
     return jsonify(ok=True)
 
 
+def _audio_command(action, body):
+    """Field speaker: on/off, test, play a clip now, callout/reminder choices."""
+    ok = True
+    if action == "speaker":
+        audio.set_enabled(bool(body.get("on")))
+    elif action == "test":
+        ok = audio.play("speaker_test", force=True)
+    elif action == "play":               # play-now button (works with speaker off)
+        clip = str(body.get("clip", ""))
+        known = {c["id"] for c in announcer.config_payload()["callouts"]} | \
+                {r["clip"] for r in announcer.config_payload()["reminders"]}
+        if clip not in known:
+            return jsonify(ok=False, error="unknown clip"), 400
+        ok = audio.play(clip, force=True)
+    elif action == "callout":
+        ok = announcer.set_callout(str(body.get("id", "")), bool(body.get("on")))
+    elif action == "reminder":
+        try:
+            ok = announcer.set_reminder(str(body.get("clip", "")), body.get("on"),
+                                        body.get("every_min"))
+        except (TypeError, ValueError):
+            ok = False
+    else:
+        return jsonify(ok=False, error="bad action"), 400
+    return jsonify(ok=bool(ok)), (200 if ok else 400)
+
+
+@app.route("/ref/timer")
+def ref_timer():
+    """Timer & field audio page (referee only)."""
+    if not auth.is_ref():
+        return redirect("/ref")
+    return _no_store(Response(render_template("timer.html", ver=config.DASH_VERSION)))
+
+
+@app.route("/api/announcer")
+def announcer_state():
+    """Callout/reminder settings + speaker status, referee only."""
+    if not auth.is_ref():
+        return jsonify(ok=False, error="referee login required"), 403
+    return jsonify(announcer.config_payload() | {"audio": audio.status()})
+
+
 @app.route("/api/command", methods=["POST"])
 def command():
     if not auth.is_ref():
@@ -163,6 +212,8 @@ def command():
 
     if scope == "game":
         return _game_command(action, body)
+    if scope == "audio":
+        return _audio_command(action, body)
     if scope == "all":
         topic, payload = "airsoft/game/command", "reset_all"
         with hub.game_lock:

@@ -2,7 +2,7 @@
 the connection watchdog, and republishes the game state when it changes."""
 import time
 
-from . import connmon, hub, modes
+from . import announcer, connmon, hub, modes
 
 
 def run():
@@ -28,8 +28,9 @@ def run():
         # 2) The selected mode's own logic (scoring, arming, ...).
         mode.tick(now, dt)
 
-        # 3) Connection watchdog.
+        # 3) Connection watchdog, and the field-speaker announcer.
         connmon.watchdog(now)
+        announcer.tick()
 
         # 4) Publish on any meaningful change.
         with hub.game_lock:

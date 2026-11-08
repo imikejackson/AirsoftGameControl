@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timer &amp; Audio</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:#0d0f12; color:#e8e8e8; }
+  header { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 16px;
+           background:#15181d; border-bottom:1px solid #262b33; }
+  header h1 { font-size:18px; margin:0; font-weight:700; letter-spacing:.04em; }
+  .ver, #status { font-size:12px; color:#7d8794; }
+  .spacer { margin-left:auto; }
+  a.reflink { font-size:13px; color:#7d8794; text-decoration:none; border:1px solid #3a414c;
+        border-radius:7px; padding:6px 10px; }
+  main { max-width:760px; margin:0 auto; padding:16px; display:grid; gap:14px; }
+  .card { background:#171a1f; border:1px solid #262b33; border-radius:12px; padding:14px 16px; }
+  .card h2 { font-size:13px; letter-spacing:.2em; font-weight:800; color:#ffcf5c; margin:0 0 10px; }
+  .hint { font-size:13px; color:#7d8794; margin:4px 0 0; }
+  #clock { font-size:72px; font-weight:800; font-variant-numeric:tabular-nums; text-align:center;
+           letter-spacing:.02em; line-height:1.1; }
+  #clock.idle { color:#7d8794; } #clock.low { color:#ff5c5c; }
+  #modeLine { text-align:center; font-size:14px; color:#cdd3da; letter-spacing:.08em; min-height:18px; }
+  .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .controls { justify-content:center; margin-top:12px; }
+  input#minutes { width:76px; font:inherit; font-size:18px; text-align:center; min-height:48px;
+        background:#0d0f12; color:#e8e8e8; border:1px solid #3a414c; border-radius:9px; }
+  button, select { font:inherit; font-size:16px; min-height:48px; color:#e8e8e8; background:#2a2f37;
+        border:1px solid #3a414c; border-radius:9px; padding:8px 16px; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  button.go { background:#1d6f33; border-color:#2a9648; }
+  button.warn { background:#7a5a12; border-color:#a37a1c; }
+  button.armed { background:#a32a33; border-color:#d0444e; }
+  button.on { background:#1d6f33; border-color:#2a9648; }
+  button.play { min-width:48px; padding:8px 12px; }
+  .list { display:grid; gap:2px; }
+  .item { display:flex; align-items:center; gap:12px; padding:8px 0; border-bottom:1px solid #20242b; }
+  .item label { flex:1; display:flex; align-items:center; gap:10px; min-height:44px; cursor:pointer; }
+  .item input[type=checkbox] { width:24px; height:24px; accent-color:#2a9648; flex:none; }
+  .item select { min-height:44px; padding:6px 8px; font-size:15px; }
+  .missing { font-size:12px; color:#ff6b6b; }
+  #audioLine { font-size:14px; color:#cdd3da; }
+  #audioErr { font-size:13px; color:#ff6b6b; min-height:16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TIMER &amp; AUDIO</h1>
+  <span class="ver">dash v{{ ver }}</span>
+  <span id="status">connecting…</span>
+  <span class="spacer"></span>
+  <a class="reflink" href="/ref">Referee dashboard</a>
+</header>
+<main>
+  <section class="card">
+    <div id="clock" class="idle">--:--</div>
+    <div id="modeLine"></div>
+    <div class="row controls">
+      <label class="row"><input id="minutes" type="number" min="1" max="120" value="15"> min</label>
+      <button id="startBtn" class="go">Start timer</button>
+      <button id="pauseBtn" class="warn" disabled>Pause</button>
+    </div>
+    <p class="hint">Start runs a Timer game: the clock, callouts and reminders, with no box scoring.
+      Callouts and reminders also play during Domination and Rush rounds started from the referee dashboard.</p>
+  </section>
+
+  <section class="card">
+    <h2>FIELD SPEAKER</h2>
+    <div class="row">
+      <button id="speakerBtn">Speaker: …</button>
+      <button id="testBtn">Test</button>
+    </div>
+    <p id="audioLine" class="hint"></p>
+    <div id="audioErr"></div>
+  </section>
+
+  <section class="card">
+    <h2>TIME CALLOUTS</h2>
+    <div id="callouts" class="list"></div>
+    <p class="hint">Callouts longer than the round are skipped automatically.</p>
+  </section>
+
+  <section class="card">
+    <h2>REMINDERS</h2>
+    <div id="reminders" class="list"></div>
+    <p class="hint">Repeats count game time, so pausing the clock pauses them. The first plays about
+      a minute into the round, staggered so they don't stack, and they wait for any callout to finish.
+      New reminder phrases are added in server/voice_clips.csv.</p>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let game = {running:false, remaining_s:0, duration_s:900, mode:'timer'};
+let cfg = null, audioSt = null;
+
+function fmt(sec){ sec = Math.max(0, Math.floor(sec));
+  return Math.floor(sec/60) + ':' + String(sec%60).padStart(2,'0'); }
+function sendCmd(body){
+  return fetch('/api/command', {method:'POST', headers:{'Content-Type':'application/json'},
+                                body: JSON.stringify(body)})
+    .then(r => { if (r.status === 403) location.href = '/ref'; return r; })
+    .catch(() => { $('audioErr').textContent = 'Could not reach the server.'; });
+}
+// Two-tap confirm instead of a browser dialog (dialogs can be blocked).
+function confirmTap(btn, label, armedLabel, action){
+  if (btn.dataset.armed){
+    clearTimeout(btn._t); delete btn.dataset.armed;
+    btn.classList.remove('armed'); btn.textContent = label; action(); return;
+  }
+  btn.dataset.armed = '1'; btn.classList.add('armed'); btn.textContent = armedLabel;
+  btn._t = setTimeout(() => { delete btn.dataset.armed; btn.classList.remove('armed');
+                              btn.textContent = label; }, 4000);
+}
+
+function renderGame(){
+  const c = $('clock');
+  c.textContent = fmt(game.remaining_s);
+  c.className = !game.running ? 'idle' : (game.remaining_s <= 60 ? 'low' : '');
+  const mode = (game.mode || '').toUpperCase();
+  $('modeLine').textContent = game.running ? (mode + ' running')
+      : (game.remaining_s > 0 && game.remaining_s < game.duration_s ? mode + ' paused' : mode + ' — ready');
+  const otherRunning = game.running && game.mode !== 'timer';
+  $('startBtn').disabled = otherRunning;
+  const paused = !game.running && game.remaining_s > 0 && game.remaining_s < game.duration_s;
+  $('pauseBtn').disabled = !(game.running || paused);
+  $('pauseBtn').textContent = game.running ? 'Pause' : 'Resume';
+  if (document.activeElement !== $('minutes') && !game.running)
+    $('minutes').value = Math.max(1, Math.round(game.duration_s / 60));
+}
+$('startBtn').onclick = () => confirmTap($('startBtn'), 'Start timer', 'Tap again to start', async () => {
+  if (game.mode !== 'timer') await sendCmd({scope:'game', action:'setmode', mode:'timer'});
+  sendCmd({scope:'game', action:'start', minutes: $('minutes').value});
+});
+$('pauseBtn').onclick = () => sendCmd({scope:'game', action: game.running ? 'stop' : 'resume'});
+$('minutes').onchange = () => { if (!game.running) sendCmd({scope:'game', action:'settime', minutes: $('minutes').value}); };
+
+function renderAudio(){
+  if (!audioSt) return;
+  const b = $('speakerBtn');
+  b.textContent = 'Speaker: ' + (audioSt.enabled ? 'ON' : 'OFF');
+  b.classList.toggle('on', audioSt.enabled);
+  const out = {aplay:'sound card (aplay)', alsa:'sound card (ALSA)', none:'NO SOUND OUTPUT FOUND'}[audioSt.backend] || audioSt.backend;
+  $('audioLine').textContent = 'Output: ' + out
+      + (audioSt.playing ? ' · playing ' + audioSt.playing : '')
+      + (audioSt.queued ? ' · ' + audioSt.queued + ' queued' : '')
+      + (audioSt.last && !audioSt.playing ? ' · last: ' + audioSt.last : '');
+  $('audioErr').textContent = audioSt.last_error ? 'Last problem: ' + audioSt.last_error : '';
+}
+$('speakerBtn').onclick = () => sendCmd({scope:'audio', action:'speaker', on: !(audioSt && audioSt.enabled)});
+$('testBtn').onclick = () => sendCmd({scope:'audio', action:'test'});
+
+function playBtn(clip){
+  const b = document.createElement('button');
+  b.className = 'play'; b.textContent = '▶'; b.title = 'Play now';
+  b.onclick = () => sendCmd({scope:'audio', action:'play', clip});
+  return b;
+}
+function renderCfg(){
+  if (!cfg) return;
+  const co = $('callouts'); co.innerHTML = '';
+  for (const c of cfg.callouts){
+    const it = document.createElement('div'); it.className = 'item';
+    const lab = document.createElement('label');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = c.on;
+    cb.onchange = () => sendCmd({scope:'audio', action:'callout', id:c.id, on:cb.checked});
+    lab.append(cb, document.createTextNode(c.label));
+    if (!c.have){ const m = document.createElement('span'); m.className='missing'; m.textContent='clip missing'; lab.append(m); }
+    it.append(lab, playBtn(c.id)); co.append(it);
+  }
+  const re = $('reminders'); re.innerHTML = '';
+  for (const r of cfg.reminders){
+    const it = document.createElement('div'); it.className = 'item';
+    const lab = document.createElement('label');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = r.on;
+    cb.onchange = () => sendCmd({scope:'audio', action:'reminder', clip:r.clip, on:cb.checked});
+    lab.append(cb, document.createTextNode(r.text));
+    if (!r.have){ const m = document.createElement('span'); m.className='missing'; m.textContent='clip missing'; lab.append(m); }
+    const sel = document.createElement('select'); sel.title = 'Repeat every';
+    for (const n of cfg.every_choices){
+      const o = document.createElement('option'); o.value = n; o.textContent = 'every ' + n + ' min';
+      if (n === r.every_min) o.selected = true; sel.append(o);
+    }
+    sel.onchange = () => sendCmd({scope:'audio', action:'reminder', clip:r.clip, every_min:Number(sel.value)});
+    it.append(lab, sel, playBtn(r.clip)); re.append(it);
+  }
+}
+
+fetch('/api/announcer').then(r => { if (r.status === 403) { location.href = '/ref'; return null; } return r.json(); })
+  .then(d => { if (!d) return; audioSt = d.audio; cfg = d; renderAudio(); renderCfg(); });
+
+const es = new EventSource('/events');
+es.onopen = () => $('status').textContent = 'live';
+es.onerror = () => $('status').textContent = 'reconnecting…';
+es.onmessage = (e) => {
+  const d = JSON.parse(e.data);
+  if (d.kind === 'game'){ game = d; renderGame(); }
+  else if (d.kind === 'audio'){ audioSt = d; renderAudio(); }
+  else if (d.kind === 'announcer'){ cfg = d; renderCfg(); }
+};
+// Smooth the clock between the server's once-a-second updates.
+setInterval(() => { if (game.running && game.remaining_s > 0) { game.remaining_s -= 0.25; renderGame(); } }, 250);
+renderGame();
+</script>
+</body>
+</html>
